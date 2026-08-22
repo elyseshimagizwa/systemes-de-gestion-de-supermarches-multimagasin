@@ -7,6 +7,9 @@ requireLogin();
 
 $user       = currentUser();
 $settings   = getSettings();
+$assetBasePath = basename(dirname($_SERVER['PHP_SELF'])) === 'backups'
+    ? '../assets'
+    : 'assets';
 
 /* =========================================================
    SECURITE HEADER
@@ -120,7 +123,7 @@ try{
 ========================================================= */
 
 $currentMagasinId =
-    $user['magasin_id'] ?? null;
+    currentMagasinId();
 
 $currentMagasinNom =
     'Aucun magasin';
@@ -261,11 +264,11 @@ $sessionToken =
 
 </title>
 
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="<?= e($assetBasePath) ?>/tailwind.css">
 
 <link
 rel="stylesheet"
-href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+href="<?= e($assetBasePath) ?>/vendor/fontawesome.min.css"
 />
 
 <script>

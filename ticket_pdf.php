@@ -21,9 +21,9 @@ $user = currentUser();
 
 $role = $user['role'] ?? 'caissier';
 
-$isSuperAdmin = ($role == 'super_admin');
+$isSuperAdmin = false;
 $isAdmin = ($role == 'admin');
-$isManager = ($role == 'manager');
+$isManager = false;
 $isCaissier = ($role == 'caissier');
 
 /*
@@ -32,12 +32,7 @@ $isCaissier = ($role == 'caissier');
 |--------------------------------------------------------------------------
 */
 
-$currentMagasinId =
-    $_SESSION['magasin_id']
-    ??
-    $user['magasin_id']
-    ??
-    0;
+$currentMagasinId = currentMagasinId();
 
 if($currentMagasinId<=0){
 
@@ -304,9 +299,9 @@ include 'includes/sidebar.php';
 
 ?>
 
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="assets/tailwind.css">
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="assets/vendor/qrcode.min.js"></script>
 
 <style>
 

@@ -6,6 +6,7 @@ require_once 'config.php';
 ========================================================= */
 
 requireLogin();
+requireAdmin();
 
 $user = currentUser();
 
@@ -123,6 +124,12 @@ if(
             'Les magasins doivent être différents'
         );
 
+        header("Location: transferts-stock.php");
+        exit;
+    }
+
+    if (!canAccessMagasin($source_id) || !canAccessMagasin($destination_id)) {
+        flash('error', 'Magasin non autorisé');
         header("Location: transferts-stock.php");
         exit;
     }
@@ -593,6 +600,10 @@ if(
             throw new Exception(
                 "Transfert introuvable"
             );
+        }
+
+        if (!canAccessMagasin($transfert['magasin_destination_id'])) {
+            throw new Exception('Magasin destination non autorisé');
         }
 
         if($transfert['statut'] == 'recu'){

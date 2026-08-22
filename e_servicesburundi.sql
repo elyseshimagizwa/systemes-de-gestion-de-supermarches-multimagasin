@@ -2910,6 +2910,8 @@ INSERT INTO `categories` (`id`, `magasin_id`, `nom`, `created_at`) VALUES
 CREATE TABLE `commandes` (
   `id` int(11) NOT NULL,
   `fournisseur_id` int(11) NOT NULL,
+  `magasin_id` int(11) DEFAULT NULL,
+  `utilisateur_id` int(11) DEFAULT NULL,
   `statut` enum('En attente','Reçue partiellement','Reçue totalement') DEFAULT 'En attente',
   `date_commande` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -15526,7 +15528,7 @@ CREATE TABLE `stock_mouvements` (
   `id` int(11) NOT NULL,
   `produit_id` int(11) NOT NULL,
   `magasin_id` int(11) NOT NULL,
-  `type` enum('entree_commande','sortie_vente','retour_client','perte','inventaire_correctif') NOT NULL,
+  `type` enum('entree','sortie','entree_commande','sortie_vente','transfert_entree','transfert_sortie','retour_client','perte','inventaire_correctif') NOT NULL,
   `quantite` int(11) NOT NULL,
   `ancien_stock` int(11) NOT NULL,
   `nouveau_stock` int(11) NOT NULL,
@@ -15596,6 +15598,7 @@ INSERT INTO `stock_mouvements` (`id`, `produit_id`, `magasin_id`, `type`, `quant
 CREATE TABLE `transactions_financieres` (
   `id` int(11) NOT NULL,
   `magasin_id` int(11) NOT NULL,
+  `session_caisse_id` int(11) DEFAULT NULL,
   `type` enum('recette','depense') NOT NULL,
   `montant` decimal(12,2) NOT NULL,
   `categorie` varchar(255) DEFAULT NULL,
@@ -15716,7 +15719,7 @@ CREATE TABLE `ventes` (
   `total` decimal(12,2) NOT NULL,
   `montant_recu` decimal(12,2) NOT NULL DEFAULT 0.00,
   `monnaie` decimal(12,2) NOT NULL DEFAULT 0.00,
-  `mode_paiement` enum('Espèces','Carte','Orange Money','Wave','Chèque') NOT NULL,
+  `mode_paiement` enum('Espèces','Carte','Mobile Money','Orange Money','Wave','Chèque') NOT NULL,
   `date_vente` timestamp NOT NULL DEFAULT current_timestamp(),
   `tva` decimal(10,2) NOT NULL DEFAULT 0.00,
   `verification_code` varchar(120) DEFAULT NULL,

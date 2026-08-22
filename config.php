@@ -62,7 +62,7 @@ header("Referrer-Policy: strict-origin-when-cross-origin");
 
 header("Permissions-Policy: geolocation=(), microphone=(), camera=()");
 
-header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob:; font-src 'self' https://cdnjs.cloudflare.com;");
+header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;");
 
 /*
 |--------------------------------------------------------------------------
@@ -80,7 +80,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
     ini_set('session.cookie_samesite', 'Strict');
 
-    ini_set('session.gc_maxlifetime', 3600);
+    ini_set('session.gc_maxlifetime', 2147483647);
 
     if (!empty($_SERVER['HTTPS'])) {
 
@@ -179,21 +179,9 @@ try {
 
 /*
 |--------------------------------------------------------------------------
-| LOAD FILES
-|--------------------------------------------------------------------------
-*/
-
-require_once __DIR__ . '/includes/fonctions.php';
-
-require_once __DIR__ . '/includes/security-monitor.php';
-
-/*
-|--------------------------------------------------------------------------
 | SECURITY CONFIG
 |--------------------------------------------------------------------------
 */
-
-define('SESSION_TIMEOUT', 9000);
 
 define('MAX_LOGIN_ATTEMPTS', 3);
 
@@ -211,21 +199,19 @@ define('UPLOAD_ALLOWED_EXTENSIONS', [
 
 /*
 |--------------------------------------------------------------------------
-| ESCAPE HTML
+| LOAD FILES
 |--------------------------------------------------------------------------
 */
 
-function e($value)
-{
-    return htmlspecialchars(
+require_once __DIR__ . '/includes/fonctions.php';
 
-        (string)$value,
+require_once __DIR__ . '/includes/security-monitor.php';
 
-        ENT_QUOTES,
-
-        'UTF-8'
-    );
-}
+/*
+|--------------------------------------------------------------------------
+| ESCAPE HTML
+|--------------------------------------------------------------------------
+*/
 
 /*
 |--------------------------------------------------------------------------
@@ -382,38 +368,6 @@ function secureFileName($name)
 |--------------------------------------------------------------------------
 */
 
-function flash(
-    $type,
-    $message = null
-)
-{
-    if ($message !== null) {
-
-        $_SESSION['flash'][$type] =
-            $message;
-
-        return;
-    }
-
-    if (
-        !empty(
-            $_SESSION['flash'][$type]
-        )
-    ) {
-
-        $msg =
-            $_SESSION['flash'][$type];
-
-        unset(
-            $_SESSION['flash'][$type]
-        );
-
-        return $msg;
-    }
-
-    return null;
-}
-
 /*
 |--------------------------------------------------------------------------
 | REFRESH USER SESSION
@@ -454,485 +408,6 @@ function refreshUserSession()
     if ($user) {
 
         $_SESSION['user'] = $user;
-    }
-}
-
-function isLoggedIn()
-{
-    return !empty($_SESSION['user']);
-}
-
-function currentUser()
-{
-    return $_SESSION['user'] ?? null;
-}
-
-function requireLogin()
-{
-    if (!isLoggedIn()) {
-
-        header(
-            "Location: login.php"
-        );
-
-        exit;
-    }
-}
-
-/*
-|--------------------------------------------------------------------------
-| ROLE SECURITY
-|--------------------------------------------------------------------------
-*/
-
-function requireRole($roles)
-{
-    requireLogin();
-
-    $user = currentUser();
-
-    $roles = (array)$roles;
-
-    if (
-
-        !in_array(
-            $user['role'],
-            $roles
-        )
-    ) {
-
-        logSecurity(
-
-            "ACCESS_DENIED",
-
-            "Accès refusé : "
-            .
-            ($user['role'] ?? 'UNKNOWN')
-        );
-
-        flash(
-            'error',
-            '⛔ Accès refusé'
-        );
-
-        header(
-            "Location: dashboard.php"
-        );
-
-        exit;
-    }
-}
-
-function requireAdmin()
-{
-    requireRole(['admin']);
-}
-
-function requireCaissier()
-{
-    requireRole([
-        'admin',
-        'caissier'
-    ]);
-}
-
-/*
-|--------------------------------------------------------------------------
-| MULTI MAGASIN
-|--------------------------------------------------------------------------
-*/
-
-function currentMagasinId()
-{
-    if (!empty($_SESSION['magasin_actif'])) {
-        return (int)$_SESSION['magasin_actif'];
-    }
-
-    return (int)($_SESSION['user']['magasin_id'] ?? 0);
-}
-
-
-function setMagasinActif($magasinId)
-{
-    $_SESSION['magasin_actif'] = (int)$magasinId;
-}
-
-/*
-|--------------------------------------------------------------------------
-| MAGASIN ACTIF GLOBAL
-|--------------------------------------------------------------------------
-*/
-
-function currentMagasin()
-{
-    global $pdo;
-
-    static $magasin = null;
-
-    if ($magasin !== null) {
-
-        return $magasin;
-    }
-
-    $magasinId = currentMagasinId();
-
-    if (!$magasinId) {
-
-        return null;
-    }
-
-    $stmt = $pdo->prepare("
-        SELECT *
-        FROM magasins
-        WHERE id=?
-        LIMIT 1
-    ");
-
-    $stmt->execute([
-        $magasinId
-    ]);
-
-    $magasin = $stmt->fetch();
-
-    return $magasin;
-}
-
-/*
-|--------------------------------------------------------------------------
-| REQUIRE MAGASIN
-|--------------------------------------------------------------------------
-*/
-
-function requireMagasin()
-{
-    if (!currentMagasinId()) {
-
-        flash(
-            'error',
-            '⛔ Aucun magasin actif'
-        );
-
-        header(
-            "Location: change_magasin.php"
-        );
-
-        exit;
-    }
-}
-function isMultiMagasin()
-{
-    return !empty(
-
-        $_SESSION['user']
-        ['multi_magasin']
-    );
-}
-
-function canAccessMagasin($magasinId)
-{
-    $user = currentUser();
-
-    if (!$user) {
-        return false;
-    }
-
-    if ($user['role'] === 'admin') {
-        return true;
-    }
-
-    if ((int)$user['multi_magasin'] === 1) {
-        return true;
-    }
-
-    return (int)$user['magasin_id'] === (int)$magasinId;
-}
-
-
-/*magasin disponibles*/ 
-function getUserMagasins()
-{
-    global $pdo;
-
-    $user = currentUser();
-
-    if (!$user) {
-        return [];
-    }
-
-    if (!empty($user['multi_magasin'])) {
-
-        $stmt = $pdo->query("
-            SELECT *
-            FROM magasins
-            WHERE actif = 1
-            ORDER BY nom ASC
-        ");
-
-        return $stmt->fetchAll();
-    }
-
-    $stmt = $pdo->prepare("
-        SELECT *
-        FROM magasins
-        WHERE id = ?
-        LIMIT 1
-    ");
-
-    $stmt->execute([
-        $user['magasin_id']
-    ]);
-
-    return $stmt->fetchAll();
-}
-/*
-|--------------------------------------------------------------------------
-| SQL FILTER MAGASIN
-|--------------------------------------------------------------------------
-*/
-
-function sqlMagasinCondition(
-    $alias = '',
-    $column = 'magasin_id'
-)
-{
-    $prefix = '';
-
-    if ($alias) {
-
-        $prefix = $alias . '.';
-    }
-
-    return $prefix . $column . '=' . (int)currentMagasinId();
-}
-
-/*
-|--------------------------------------------------------------------------
-| SQL PARAM MAGASIN
-|--------------------------------------------------------------------------
-*/
-
-function sqlMagasinParam()
-{
-    return [
-        currentMagasinId()
-    ];
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| CHECK OPEN CAISSE
-|--------------------------------------------------------------------------
-*/
-
-function hasOpenCaisse(
-    $utilisateurId = null
-)
-{
-    global $pdo;
-
-    if (!$utilisateurId) {
-
-        $user = currentUser();
-
-        $utilisateurId =
-            $user['id'] ?? 0;
-    }
-
-    $stmt = $pdo->prepare("
-        SELECT id
-        FROM sessions_caisse
-        WHERE utilisateur_id=?
-        AND statut='ouverte'
-        LIMIT 1
-    ");
-
-    $stmt->execute([
-        $utilisateurId
-    ]);
-
-    return (bool)$stmt->fetch();
-}
-
-/*
-|--------------------------------------------------------------------------
-| CSRF SECURITY
-|--------------------------------------------------------------------------
-*/
-
-function csrf_token()
-{
-    if (
-        empty(
-            $_SESSION['csrf_token']
-        )
-    ) {
-
-        $_SESSION['csrf_token'] =
-
-            bin2hex(
-                random_bytes(32)
-            );
-    }
-
-    return $_SESSION['csrf_token'];
-}
-
-function verify_csrf()
-{
-    if (
-        $_SERVER['REQUEST_METHOD']
-        ===
-        'POST'
-    ) {
-
-        $token =
-            $_POST['csrf_token']
-            ??
-            '';
-
-        if (
-
-            empty($token)
-
-            ||
-
-            !hash_equals(
-
-                $_SESSION['csrf_token']
-                ??
-                '',
-
-                $token
-            )
-        ) {
-
-            logSecurity(
-
-                "CSRF_ATTACK",
-
-                "Tentative CSRF détectée"
-            );
-
-            exit(
-                "❌ CSRF invalide"
-            );
-        }
-    }
-}
-
-/*
-|--------------------------------------------------------------------------
-| ACTION LOG
-|--------------------------------------------------------------------------
-*/
-
-function logAction(
-    $action,
-    $details = null,
-    $niveau = 'INFO'
-)
-{
-    global $pdo;
-
-    try {
-
-        $user = currentUser();
-
-        $stmt = $pdo->prepare("
-            INSERT INTO historiques
-            (
-                utilisateur_id,
-                action,
-                details,
-                ip,
-                niveau,
-                created_at
-            )
-            VALUES
-            (
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                NOW()
-            )
-        ");
-
-        $stmt->execute([
-
-            $user['id'] ?? null,
-
-            $action,
-
-            $details,
-
-            $_SERVER['REMOTE_ADDR']
-            ??
-            'UNKNOWN',
-
-            $niveau
-        ]);
-
-    } catch (Exception $e) {
-
-        // silent
-    }
-}
-
-/*
-|--------------------------------------------------------------------------
-| SECURITY LOGS
-|--------------------------------------------------------------------------
-*/
-
-function logSecurity(
-    $type,
-    $message
-)
-{
-    global $pdo;
-
-    try {
-
-        $stmt = $pdo->prepare("
-            INSERT INTO securite_logs
-            (
-                type,
-                message,
-                ip,
-                user_agent,
-                created_at
-            )
-            VALUES
-            (
-                ?,
-                ?,
-                ?,
-                ?,
-                NOW()
-            )
-        ");
-
-        $stmt->execute([
-
-            $type,
-
-            $message,
-
-            $_SERVER['REMOTE_ADDR']
-            ??
-            'UNKNOWN',
-
-            $_SERVER['HTTP_USER_AGENT']
-            ??
-            ''
-        ]);
-
-    } catch (Exception $e) {
-
-        // silent
     }
 }
 
@@ -1259,61 +734,6 @@ function detectSuspiciousIP()
 
 /*
 |--------------------------------------------------------------------------
-| SESSION TIMEOUT
-|--------------------------------------------------------------------------
-*/
-
-function checkSessionTimeout()
-{
-    if (
-        !isset(
-            $_SESSION['last_activity']
-        )
-    ) {
-
-        $_SESSION['last_activity'] =
-            time();
-
-        return;
-    }
-
-    if (
-
-        time()
-
-        -
-
-        $_SESSION['last_activity']
-
-        >
-
-        SESSION_TIMEOUT
-    ) {
-
-        logAction(
-
-            "TIMEOUT",
-
-            "Déconnexion automatique"
-        );
-
-        session_unset();
-
-        session_destroy();
-
-        header(
-            "Location: login.php?timeout=1"
-        );
-
-        exit;
-    }
-
-    $_SESSION['last_activity'] =
-        time();
-}
-
-/*
-|--------------------------------------------------------------------------
 | IP LOCK
 |--------------------------------------------------------------------------
 */
@@ -1547,8 +967,6 @@ bootMultiMagasin();
 if (isLoggedIn()) {
 
     detectSuspiciousIP();
-
-    checkSessionTimeout();
 
     checkIP();
 

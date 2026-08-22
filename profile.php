@@ -69,7 +69,10 @@ if (
     verify_csrf();
 
     $email =
-        trim($_POST['email']);
+        strtolower(trim($_POST['email'] ?? ''));
+
+    $nom =
+        trim(strip_tags($_POST['nom'] ?? ''));
 
     $telephone =
         trim($_POST['telephone']);
@@ -80,94 +83,52 @@ if (
     $genre =
         trim($_POST['genre']);
 
-    if($isAdmin){
+    if ($nom === '') {
+        $error = 'Le nom complet est obligatoire';
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error = 'Adresse email invalide';
+    }
 
-        $nom =
-            trim($_POST['nom']);
+    if (!$error) {
+        $checkEmail = $pdo->prepare("SELECT id FROM utilisateurs WHERE email=? AND id<>? LIMIT 1");
+        $checkEmail->execute([$email, $user_id]);
 
-    }else{
-
-        $nom =
-            $user['nom'];
+        if ($checkEmail->fetch()) {
+            $error = 'Cette adresse email est déjà utilisée';
+        }
     }
 
     /* =====================================================
        PHOTO ACTUELLE
     ===================================================== */
 
-    $stmtPhoto = $pdo->prepare("
-        SELECT photo
-        FROM profils
-        WHERE utilisateur_id=?
-    ");
-
+    $stmtPhoto = $pdo->prepare("SELECT photo FROM profils WHERE utilisateur_id=?");
     $stmtPhoto->execute([$user_id]);
 
     $oldPhoto = $stmtPhoto->fetch();
+    $photo = $oldPhoto['photo'] ?? null;
 
-    $photo =
-        $oldPhoto['photo'] ?? null;
-
-    /* =====================================================
-       UPLOAD PHOTO
-    ===================================================== */
-
-    if (
-        isset($_FILES['photo'])
-        &&
-        $_FILES['photo']['error'] === 0
-    ) {
-
-        $uploadDir =
-            'uploads/profiles/';
+    if (isset($_FILES['photo']) && $_FILES['photo']['error'] === 0) {
+        $uploadDir = 'uploads/profiles/';
 
         if (!is_dir($uploadDir)) {
-
-            mkdir(
-                $uploadDir,
-                0777,
-                true
-            );
+            mkdir($uploadDir, 0777, true);
         }
 
-        $extension = strtolower(
-            pathinfo(
-                $_FILES['photo']['name'],
-                PATHINFO_EXTENSION
-            )
-        );
+        $extension = strtolower(pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION));
+        $allowed = ['jpg', 'jpeg', 'png', 'webp'];
 
-        $allowed =
-            ['jpg','jpeg','png','webp'];
-
-        if (!in_array($extension, $allowed)) {
-
-            $error =
-                "Image invalide";
-
+        if (!in_array($extension, $allowed, true)) {
+            $error = 'Image invalide';
         } else {
+            $fileName = 'profile_'.time().'_'.rand(1000, 9999).'.'.$extension;
+            $destination = $uploadDir.$fileName;
 
-            $fileName =
-                'profile_'
-                . time()
-                . '_'
-                . rand(1000,9999)
-                . '.'
-                . $extension;
-
-            $destination =
-                $uploadDir
-                . $fileName;
-
-            move_uploaded_file(
-
-                $_FILES['photo']['tmp_name'],
-
-                $destination
-            );
-
-            $photo =
-                $destination;
+            if (move_uploaded_file($_FILES['photo']['tmp_name'], $destination)) {
+                $photo = $destination;
+            } else {
+                $error = 'Impossible d’enregistrer la photo';
+            }
         }
     }
 
@@ -177,42 +138,8 @@ if (
 
     if(!$error){
 
-        if($isAdmin){
-
-            $stmtUser = $pdo->prepare("
-                UPDATE utilisateurs
-                SET
-                    nom=?,
-                    email=?
-                WHERE id=?
-            ");
-
-            $stmtUser->execute([
-
-                $nom,
-
-                $email,
-
-                $user_id
-            ]);
-
-        }else{
-
-            $stmtUser = $pdo->prepare("
-                UPDATE utilisateurs
-                SET
-                    email=?
-                WHERE id=?
-            ");
-
-            $stmtUser->execute([
-
-                $email,
-
-                $user_id
-            ]);
-        }
-
+        $stmtUser = $pdo->prepare("UPDATE utilisateurs SET nom=?, email=? WHERE id=?");
+        $stmtUser->execute([$nom, $email, $user_id]);
         /* =====================================================
            UPDATE PROFILE
         ===================================================== */
@@ -239,6 +166,8 @@ if (
 
             $user_id
         ]);
+
+        refreshUserSession();
 
         $_SESSION['success'] =
             "✅ Profil mis à jour avec succès";
@@ -946,8 +875,9 @@ textarea.profile-input{
                             type="text"
                             name="nom"
                             value="<?= e($userData['nom']) ?>"
-                            <?= !$isAdmin ? 'readonly' : '' ?>
-                            class="profile-input <?= !$isAdmin ? 'opacity-60 cursor-not-allowed' : '' ?>"
+                            placeholder="Nom complet"
+                            required
+                            class="profile-input"
                         >
 
                     </div>
@@ -986,8 +916,8 @@ textarea.profile-input{
                             type="text"
                             name="telephone"
                             value="<?= e($userData['telephone']) ?>"
-                            <?= !$isAdmin ? 'readonly' : '' ?>
-                            class="profile-input <?= !$isAdmin ? 'opacity-60 cursor-not-allowed' : '' ?>"
+                            placeholder="Téléphone"
+                            class="profile-input"
                         >
 
                     </div>
@@ -1004,8 +934,7 @@ textarea.profile-input{
 
                         <select
                             name="genre"
-                            <?= !$isAdmin ? 'disabled' : '' ?>
-                            class="profile-input <?= !$isAdmin ? 'opacity-60 cursor-not-allowed' : '' ?>"
+                            class="profile-input"
                         >
 
                             <option value="">
@@ -1066,8 +995,8 @@ textarea.profile-input{
                         <textarea
                             name="adresse"
                             rows="5"
-                            <?= !$isAdmin ? 'readonly' : '' ?>
-                            class="profile-input <?= !$isAdmin ? 'opacity-60 cursor-not-allowed' : '' ?>"
+                            placeholder="Adresse"
+                            class="profile-input"
                         ><?= e($userData['adresse']) ?></textarea>
 
                     </div>

@@ -1,6 +1,7 @@
 <?php
 require_once 'config.php';
 requireLogin();
+requireCaissier();
 
 $user = currentUser();
 $settings = getSettings();
@@ -51,10 +52,7 @@ function historique(
 /* =========================
    ACCÈS ADMIN
 ========================= */
-if ($user['role'] !== 'admin') {
-    header("Location: dashboard.php");
-    exit;
-}
+$isAdmin = isAdmin();
 
 /* =========================
    FILTRES
@@ -88,6 +86,16 @@ $caissier = $_GET['caissier'] ?? '';
 
 $where = "WHERE DATE(v.date_vente) BETWEEN ? AND ?";
 $params = [$start, $end];
+
+if (!$isAdmin) {
+    $where .= " AND v.magasin_id=?";
+    $params[] = currentMagasinId();
+}
+
+if ($isAdmin && !empty($_GET['magasin_id'])) {
+    $where .= " AND v.magasin_id=?";
+    $params[] = (int)$_GET['magasin_id'];
+}
 
 if ($caissier !== '') {
     $where .= " AND v.utilisateur_id=?";
@@ -214,8 +222,7 @@ $topCashiers = $stmt->fetchAll();
 /* =========================
    PRODUITS NON VENDUS
 ========================= */
-$nonSold =
-    $pdo->query("
+    $nonSoldSql = "
         SELECT p.nom
 
         FROM produits p
@@ -223,13 +230,14 @@ $nonSold =
         LEFT JOIN ligne_ventes lv
         ON lv.produit_id = p.id
 
-        WHERE lv.id IS NULL
+        WHERE lv.id IS NULL";
 
-        ORDER BY p.nom
+    if (!$isAdmin) {
+        $nonSoldSql .= " AND p.magasin_id=".(int)currentMagasinId();
+    }
 
-        LIMIT 20
-    ")
-    ->fetchAll();
+    $nonSoldSql .= " ORDER BY p.nom LIMIT 20";
+    $nonSold = $pdo->query($nonSoldSql)->fetchAll();
 include 'includes/header.php';
 include 'includes/sidebar.php';
 ?>
@@ -260,7 +268,11 @@ include 'includes/sidebar.php';
         <option value="">Tous les caissiers</option>
 
         <?php
-        $users = $pdo->query("SELECT id,nom FROM utilisateurs")->fetchAll();
+        $usersSql = "SELECT id, nom FROM utilisateurs";
+        if (!$isAdmin) {
+            $usersSql .= " WHERE magasin_id=".(int)currentMagasinId();
+        }
+        $users = $pdo->query($usersSql)->fetchAll();
         foreach ($users as $u):
         ?>
             <option value="<?= $u['id'] ?>"

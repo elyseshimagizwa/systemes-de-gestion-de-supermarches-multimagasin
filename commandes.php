@@ -4,6 +4,7 @@
 require_once 'config.php';
 
 requireLogin();
+requireAdmin();
 
 /* =========================
    ACCES ADMIN + CAISSIER
@@ -36,6 +37,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
 
     try {
 
+        $fournisseurCheck = $pdo->prepare("SELECT id FROM fournisseurs WHERE id=? AND magasin_id=? LIMIT 1");
+        $fournisseurCheck->execute([(int)$_POST['fournisseur_id'], currentMagasinId()]);
+
+        if (!$fournisseurCheck->fetch()) {
+            throw new Exception('Fournisseur introuvable ou magasin non autorisé');
+        }
+
         /* =========================
            INSERT COMMANDE
         ========================== */
@@ -43,17 +51,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             INSERT INTO commandes
             (
                 fournisseur_id,
+                magasin_id,
+                utilisateur_id,
                 statut
             )
             VALUES
             (
+                ?,
+                ?,
                 ?,
                 'En attente'
             )
         ");
 
         $stmt->execute([
-            $_POST['fournisseur_id']
+            (int)$_POST['fournisseur_id'],
+            currentMagasinId(),
+            $user['id']
         ]);
 
         $commandeId = $pdo->lastInsertId();
@@ -66,6 +80,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             $qte = (int)$_POST['quantite'][$i];
 
             if ($pid && $qte > 0) {
+
+                $produitCheck = $pdo->prepare("SELECT id FROM produits WHERE id=? AND magasin_id=? LIMIT 1");
+                $produitCheck->execute([(int)$pid, currentMagasinId()]);
+
+                if (!$produitCheck->fetch()) {
+                    throw new Exception('Produit introuvable ou magasin non autorisé');
+                }
 
                 $pa =
                     (float)$_POST['prix_achat'][$i];
@@ -164,6 +185,13 @@ if (isset($_GET['recevoir'])) {
 
     try {
 
+        $checkCommande = $pdo->prepare("SELECT id FROM commandes WHERE id=? AND magasin_id=? FOR UPDATE");
+        $checkCommande->execute([$id, currentMagasinId()]);
+
+        if (!$checkCommande->fetch()) {
+            throw new Exception('Commande introuvable ou magasin non autorisé');
+        }
+
         /* =========================
            LIGNES COMMANDE
         ========================== */
@@ -184,10 +212,13 @@ if (isset($_GET['recevoir'])) {
                 SELECT quantite
                 FROM produits
                 WHERE id=?
+                AND magasin_id=?
+                FOR UPDATE
             ");
 
             $old->execute([
-                $it['produit_id']
+                $it['produit_id'],
+                currentMagasinId()
             ]);
 
             $ancien =
@@ -201,13 +232,15 @@ if (isset($_GET['recevoir'])) {
                 UPDATE produits
                 SET quantite=?
                 WHERE id=?
+                AND magasin_id=?
             ");
 
             $u->execute([
 
                 $nouveau,
 
-                $it['produit_id']
+                $it['produit_id'],
+                currentMagasinId()
             ]);
 
             /* =========================
@@ -217,6 +250,7 @@ if (isset($_GET['recevoir'])) {
                 INSERT INTO stock_mouvements
                 (
                     produit_id,
+                    magasin_id,
                     type,
                     quantite,
                     ancien_stock,
@@ -232,6 +266,7 @@ if (isset($_GET['recevoir'])) {
                     ?,
                     ?,
                     ?,
+                    ?,
                     ?
                 )
             ");
@@ -239,6 +274,8 @@ if (isset($_GET['recevoir'])) {
             $m->execute([
 
                 $it['produit_id'],
+
+                currentMagasinId(),
 
                 'entree_commande',
 

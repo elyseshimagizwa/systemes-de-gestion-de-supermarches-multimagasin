@@ -99,85 +99,12 @@ if(!isset($_SESSION['device'])){
 }
 
 /* =========================
-   SESSION TIMEOUT
-========================= */
-
-$sessionTimeout = 1800;
-
-/* =========================
-   LAST ACTIVITY INIT
+    LAST ACTIVITY
 ========================= */
 
 if(!isset($_SESSION['last_activity'])){
 
     $_SESSION['last_activity'] = time();
-}
-
-/* =========================
-   SESSION EXPIRED
-========================= */
-
-if(
-
-    time() - $_SESSION['last_activity']
-    > $sessionTimeout
-){
-
-    /*
-    |-----------------------------------
-    | SECURITY LOG
-    |-----------------------------------
-    */
-
-    logSecurity(
-
-        "SESSION_TIMEOUT",
-
-        "Session expirée : ".$userEmail
-    );
-
-    /*
-    |-----------------------------------
-    | UPDATE DB
-    |-----------------------------------
-    */
-
-    try{
-
-        $stmt = $pdo->prepare("
-            UPDATE connexions_utilisateurs
-            SET
-                statut='expiree',
-                derniere_activite=NOW()
-            WHERE session_id=?
-        ");
-
-        $stmt->execute([
-
-            $sessionId
-        ]);
-
-    }catch(Exception $e){
-
-        error_log($e->getMessage());
-    }
-
-    /*
-    |-----------------------------------
-    | DESTROY SESSION
-    |-----------------------------------
-    */
-
-    session_unset();
-
-    session_destroy();
-
-    if(!headers_sent()){
-
-        header("Location: login.php?timeout=1");
-    }
-
-    exit;
 }
 
 /* =========================

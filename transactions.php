@@ -20,21 +20,14 @@ ROLES
 
 $role = $user['role'] ?? 'utilisateur';
 
-$isSuperAdmin = ($role == 'super_admin');
+$isSuperAdmin = false;
 $isAdmin       = ($role == 'admin');
-$isManager     = ($role == 'manager');
+$isManager     = false;
 $isCaissier    = ($role == 'caissier');
 
 /*=========================================================
 TENANT
 =========================================================*/
-
-$tenant_id =
-$_SESSION['tenant_id']
-??
-$user['tenant_id']
-??
-1;
 
 /*=========================================================
 MAGASIN ACTIF
@@ -69,28 +62,20 @@ isset($_GET['magasin'])
 $selectedMagasinId =
 (int)$_GET['magasin'];
 
+    if ($selectedMagasinId > 0) {
+        $isGlobalView = false;
+    }
+
 }
 
 /*=========================================================
 MODE GLOBAL
 =========================================================*/
 
-$isGlobalView = false;
+$isGlobalView = $isAdmin;
 
-if(
-
-($isSuperAdmin || $isAdmin)
-
-&&
-
-isset($_GET['global'])
-
-)
-
-{
-
-$isGlobalView = true;
-
+if ($isAdmin && isset($_GET['global']) && $_GET['global'] === '0') {
+    $isGlobalView = false;
 }
 /* =========================================================
    FILTRES
@@ -112,15 +97,6 @@ FILTRES SQL
 $where = "";
 
 $params = [];
-
-if(!$isGlobalView)
-{
-
-    $where .= " AND tenant_id=? ";
-
-    $params[] = $tenant_id;
-
-}
 
 if(
 
@@ -178,16 +154,15 @@ $stmt->execute($paramsRecette);
                 COALESCE(SUM(montant),0)
             FROM transactions_financieres
             WHERE type='depense'
-            AND magasin_id=?
+            $where
             AND DATE(created_at)
             BETWEEN ? AND ?
         ");
 
-        $stmt->execute([
-            $magasin_id,
-            $dateDebut,
-            $dateFin
-        ]);
+        $paramsDepense = $params;
+        $paramsDepense[] = $dateDebut;
+        $paramsDepense[] = $dateFin;
+        $stmt->execute($paramsDepense);
 
         $depenses = $stmt->fetchColumn();
 
@@ -243,14 +218,10 @@ $stmt->execute($paramsRecette);
             LIMIT 10
         ");
 
-        $stmt->execute([
-
-            $magasin_id,
-
-            $dateDebut,
-
-            $dateFin
-        ]);
+        $paramsTransactions = $params;
+        $paramsTransactions[] = $dateDebut;
+        $paramsTransactions[] = $dateFin;
+        $stmt->execute($paramsTransactions);
 
         $data = $stmt->fetchAll();
 
@@ -280,7 +251,8 @@ $stmt->execute($paramsRecette);
 
             FROM transactions_financieres
 
-            WHERE magasin_id=?
+            WHERE 1=1
+            $where
 
             AND DATE(created_at)
             BETWEEN ? AND ?
@@ -288,14 +260,10 @@ $stmt->execute($paramsRecette);
             GROUP BY DATE(created_at)
         ");
 
-        $stmt->execute([
-
-            $magasin_id,
-
-            $dateDebut,
-
-            $dateFin
-        ]);
+        $paramsGraph = $params;
+        $paramsGraph[] = $dateDebut;
+        $paramsGraph[] = $dateFin;
+        $stmt->execute($paramsGraph);
 
         $data = $stmt->fetchAll();
 
@@ -344,10 +312,19 @@ if (
         exit;
     }
 
+    $sessionCaisseId = currentOpenCaisseId($user['id'], $magasin_id);
+
+    if ($sessionCaisseId === null) {
+        flash('error', 'Ouvrez une session de caisse avant d’ajouter une recette ou une dépense.');
+        header("Location: transactions.php");
+        exit;
+    }
+
     $stmt = $pdo->prepare("
         INSERT INTO transactions_financieres
         (
             magasin_id,
+            session_caisse_id,
             type,
             categorie,
             description,
@@ -363,6 +340,7 @@ if (
             ?,
             ?,
             ?,
+            ?,
             NOW()
         )
     ");
@@ -370,6 +348,8 @@ if (
     $stmt->execute([
 
         $magasin_id,
+
+        $sessionCaisseId,
 
         $type,
 
@@ -1123,7 +1103,7 @@ class="bg-red-600 text-white px-3 py-1 rounded">
 
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="assets/vendor/chart.min.js"></script>
 
 <script>
 

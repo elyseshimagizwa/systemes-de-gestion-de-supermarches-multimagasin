@@ -4,8 +4,7 @@ require_once 'config.php';
 requireLogin();
 $user = currentUser();
 
-$isGlobalAdmin =
-    ($user['role'] === 'super_admin'.'admin');
+$isGlobalAdmin = isAdmin();
 
 $magasin_id =
     $user['magasin_id'] ?? 0;

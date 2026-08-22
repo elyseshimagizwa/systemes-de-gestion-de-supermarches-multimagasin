@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    html { min-width: 320px; }
+    body { overflow-x: hidden; }
+    img, svg, video, canvas { max-width: 100%; }
+    input, select, textarea, button { max-width: 100%; }
+}
+
+@layer utilities {
+    .page-wrap { width: min(100% - 2rem, 80rem); margin-inline: auto; }
+    .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+
+@media (max-width: 767px) {
+    .md\:ml-64 { margin-left: 0 !important; }
+    table { min-width: 42rem; }
+    .overflow-x-auto table { min-width: 42rem; }
+    h1 { overflow-wrap: anywhere; }
+}

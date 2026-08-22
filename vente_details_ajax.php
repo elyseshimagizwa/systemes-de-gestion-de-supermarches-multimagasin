@@ -6,11 +6,7 @@ requireLogin();
 
 $user = currentUser();
 
-$isGlobalAdmin =
-    in_array(
-        $user['role'],
-        ['super_admin','global_admin']
-    );
+$isGlobalAdmin = isAdmin();
 
 $magasin_id =
     (int)($user['magasin_id'] ?? 0);

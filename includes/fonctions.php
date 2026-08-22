@@ -122,6 +122,99 @@ if (!function_exists('requireCaissier')) {
     }
 }
 
+if (!function_exists('isAdmin')) {
+
+    function isAdmin()
+    {
+        return (currentUser()['role'] ?? '') === 'admin';
+    }
+}
+
+if (!function_exists('isCaissier')) {
+
+    function isCaissier()
+    {
+        return (currentUser()['role'] ?? '') === 'caissier';
+    }
+}
+
+if (!function_exists('canAccessMagasin')) {
+
+    function canAccessMagasin($magasinId)
+    {
+        $user = currentUser();
+
+        if (!$user || (int)$magasinId <= 0) {
+            return false;
+        }
+
+        if (($user['role'] ?? '') === 'admin') {
+            return true;
+        }
+
+        return (int)($user['magasin_id'] ?? 0) === (int)$magasinId;
+    }
+}
+
+if (!function_exists('currentOpenCaisseId')) {
+
+    function currentOpenCaisseId($utilisateurId = null, $magasinId = null)
+    {
+        global $pdo;
+
+        $user = currentUser();
+        $utilisateurId = $utilisateurId ?? ($user['id'] ?? 0);
+        $magasinId = $magasinId ?? currentMagasinId();
+
+        if ((int)$utilisateurId <= 0 || (int)$magasinId <= 0) {
+            return null;
+        }
+
+        $stmt = $pdo->prepare("SELECT id FROM sessions_caisse WHERE utilisateur_id=? AND magasin_id=? AND statut='ouverte' LIMIT 1");
+        $stmt->execute([(int)$utilisateurId, (int)$magasinId]);
+
+        $id = $stmt->fetchColumn();
+        return $id === false ? null : (int)$id;
+    }
+}
+
+if (!function_exists('requireMagasinAccess')) {
+
+    function requireMagasinAccess($magasinId)
+    {
+        requireLogin();
+
+        if (!canAccessMagasin($magasinId)) {
+            http_response_code(403);
+            exit('Accès magasin refusé');
+        }
+    }
+}
+
+if (!function_exists('getUserMagasins')) {
+
+    function getUserMagasins()
+    {
+        global $pdo;
+
+        $user = currentUser();
+
+        if (!$user) {
+            return [];
+        }
+
+        if (($user['role'] ?? '') === 'admin') {
+            $stmt = $pdo->query("SELECT * FROM magasins WHERE statut='actif' ORDER BY nom ASC");
+            return $stmt->fetchAll();
+        }
+
+        $stmt = $pdo->prepare("SELECT * FROM magasins WHERE id=? AND statut='actif' LIMIT 1");
+        $stmt->execute([(int)($user['magasin_id'] ?? 0)]);
+
+        return $stmt->fetchAll();
+    }
+}
+
 /* =========================================================
 | MULTI MAGASIN
 ========================================================= */
@@ -130,7 +223,27 @@ if (!function_exists('currentMagasinId')) {
 
     function currentMagasinId()
     {
-        return $_SESSION['user']['magasin_id'] ?? null;
+        $activeId = (int)($_SESSION['magasin_actif'] ?? 0);
+
+        if ($activeId > 0 && canAccessMagasin($activeId)) {
+            return $activeId;
+        }
+
+        return (int)($_SESSION['user']['magasin_id'] ?? 0);
+    }
+}
+
+if (!function_exists('setMagasinActif')) {
+
+    function setMagasinActif($magasinId)
+    {
+        if (!canAccessMagasin($magasinId)) {
+            return false;
+        }
+
+        $_SESSION['magasin_actif'] = (int)$magasinId;
+
+        return true;
     }
 }
 
@@ -510,43 +623,6 @@ if (!function_exists('getLoginAttempts')) {
         return
             $_SESSION['login_attempts'][$email];
     }
-}
-
-/* =========================================================
-| AUTO SESSION TIMEOUT
-========================================================= */
-
-if (isLoggedIn()) {
-
-    if (!isset($_SESSION['last_activity'])) {
-
-        $_SESSION['last_activity'] = time();
-    }
-
-    if (
-
-        time() - $_SESSION['last_activity']
-        > 900
-
-    ) {
-
-        logSecurity(
-
-            "TIMEOUT",
-
-            "Session expirée"
-        );
-
-        session_unset();
-
-        session_destroy();
-
-        header("Location: login.php?timeout=1");
-
-        exit;
-    }
-
-    $_SESSION['last_activity'] = time();
 }
 
 /* =========================================================

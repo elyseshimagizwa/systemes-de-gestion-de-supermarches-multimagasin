@@ -24,14 +24,7 @@ $user = currentUser();
 $isAdmin =
     ($user['role'] ?? '') === 'admin';
 
-$isGlobalAdmin =
-    $isAdmin
-    &&
-    (
-        empty($user['magasin_id'])
-        ||
-        isset($_GET['global'])
-    );
+$isGlobalAdmin = $isAdmin;
 
 $magasin_id =
     (int)($user['magasin_id'] ?? 0);
@@ -859,6 +852,7 @@ $sessionActive = $sessionStats->fetch();
 ========================================== */
 
 $totalVentes = 0;
+$chiffreAffairesSession = 0;
 $totalEntrees = 0;
 $totalSorties = 0;
 $soldeActuel = 0;
@@ -871,20 +865,28 @@ if($sessionActive){
 
     $ventes = $pdo->prepare("
         SELECT
-            COALESCE(
-                SUM(montant_recu),
-                0
-            )
+            COALESCE(SUM(total),0) AS chiffre_affaires,
+            COALESCE(SUM(
+                CASE
+                    WHEN mode_paiement='Espèces'
+                    THEN montant_recu - monnaie
+                    ELSE 0
+                END
+            ),0) AS especes
         FROM ventes
         WHERE session_caisse_id=?
+        AND magasin_id=?
     ");
 
     $ventes->execute([
-        $sessionActive['id']
+        $sessionActive['id'],
+        $magasin_id
     ]);
 
-    $totalVentes =
-        (float)$ventes->fetchColumn();
+    $venteTotals = $ventes->fetch();
+
+    $chiffreAffairesSession = (float)$venteTotals['chiffre_affaires'];
+    $totalVentes = (float)$venteTotals['especes'];
 
     /* ==============================
        ENTREES
@@ -897,12 +899,12 @@ if($sessionActive){
                 0
             )
         FROM transactions_financieres
-        WHERE magasin_id=?
-        AND type='entree'
+        WHERE session_caisse_id=?
+        AND type='recette'
     ");
 
     $entrees->execute([
-        $magasin_id
+        $sessionActive['id']
     ]);
 
     $totalEntrees =
@@ -919,12 +921,12 @@ if($sessionActive){
                 0
             )
         FROM transactions_financieres
-        WHERE magasin_id=?
-        AND type='sortie'
+        WHERE session_caisse_id=?
+        AND type='depense'
     ");
 
     $sorties->execute([
-        $magasin_id
+        $sessionActive['id']
     ]);
 
     $totalSorties =
@@ -957,7 +959,7 @@ if($sessionActive){
 
     $updateSession->execute([
 
-        $totalVentes,
+        $chiffreAffairesSession,
 
         $soldeActuel,
 
@@ -971,7 +973,7 @@ include 'includes/header.php';
 include 'includes/sidebar.php';
 ?>
 
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="assets/tailwind.css">
 
 <script>
 
@@ -1515,7 +1517,7 @@ value="<?= $m['id'] ?>"
 
 </div>
 
-<script src="https://unpkg.com/@zxing/library@latest"></script>
+<script src="assets/vendor/zxing.min.js"></script>
 
 <script>
 
