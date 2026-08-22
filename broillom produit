@@ -1,0 +1,1400 @@
+<?php
+
+declare(strict_types=1);
+
+require_once 'config.php';
+
+requireLogin();
+
+/* =========================================================
+   SECURITE ROLE
+========================================================= */
+
+$allowedRoles = ['admin', 'manager', 'caissier'];
+
+if (
+    !isset(currentUser()['role']) ||
+    !in_array(currentUser()['role'], $allowedRoles, true)
+) {
+
+    http_response_code(403);
+
+    exit("
+    <div style='padding:30px;font-family:Arial'>
+        ⛔ Accès refusé
+    </div>
+    ");
+}
+
+/* =========================================================
+   CONFIGURATION
+========================================================= */
+
+$user = currentUser();
+
+$magasin_id = (int)($user['magasin_id'] ?? 0);
+
+if ($magasin_id <= 0) {
+
+    exit("
+    <div style='padding:30px;font-family:Arial'>
+        ⛔ Aucun magasin assigné
+    </div>
+    ");
+}
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function clean(?string $value): string
+{
+    return trim((string)$value);
+}
+
+function stockBadge(int $quantite, int $seuil): array
+{
+    if ($quantite <= 0) {
+
+        return [
+            'class' => 'bg-red-100 text-red-700',
+            'text'  => 'Rupture'
+        ];
+    }
+
+    if ($quantite <= $seuil) {
+
+        return [
+            'class' => 'bg-yellow-100 text-yellow-700',
+            'text'  => 'Faible'
+        ];
+    }
+
+    return [
+        'class' => 'bg-green-100 text-green-700',
+        'text'  => 'Disponible'
+    ];
+}
+
+function ajouterHistorique(
+    PDO $pdo,
+    string $action,
+    string $details,
+    string $niveau = 'info'
+): void {
+
+    $stmt = $pdo->prepare("
+        INSERT INTO historiques
+        (
+            utilisateur_id,
+            magasin_id,
+            action,
+            details,
+            ip,
+            created_at,
+            niveau
+        )
+        VALUES
+        (
+            :utilisateur_id,
+            :magasin_id,
+            :action,
+            :details,
+            :ip,
+            NOW(),
+            :niveau
+        )
+    ");
+
+    $stmt->execute([
+
+        ':utilisateur_id' => currentUser()['id'] ?? null,
+
+        ':magasin_id' => currentUser()['magasin_id'] ?? null,
+
+        ':action' => $action,
+
+        ':details' => $details,
+
+        ':ip' => $_SERVER['REMOTE_ADDR'] ?? 'IP inconnue',
+
+        ':niveau' => $niveau
+    ]);
+}
+
+function enregistrerMouvementStock(
+    PDO $pdo,
+    int $magasin_id,
+    int $produit_id,
+    string $type,
+    int $quantite,
+    int $ancien,
+    int $nouveau,
+    string $motif
+): void {
+
+    $stmt = $pdo->prepare("
+        INSERT INTO stock_mouvements
+        (
+            magasin_id,
+            produit_id,
+            type,
+            quantite,
+            ancien_stock,
+            nouveau_stock,
+            motif,
+            utilisateur_id,
+            date_mouvement
+        )
+        VALUES
+        (
+            :magasin_id,
+            :produit_id,
+            :type,
+            :quantite,
+            :ancien_stock,
+            :nouveau_stock,
+            :motif,
+            :utilisateur_id,
+            NOW()
+        )
+    ");
+
+    $stmt->execute([
+
+        ':magasin_id' => $magasin_id,
+
+        ':produit_id' => $produit_id,
+
+        ':type' => $type,
+
+        ':quantite' => $quantite,
+
+        ':ancien_stock' => $ancien,
+
+        ':nouveau_stock' => $nouveau,
+
+        ':motif' => $motif,
+
+        ':utilisateur_id' => currentUser()['id']
+    ]);
+}
+
+/* =========================================================
+   AJOUT PRODUIT
+========================================================= */
+
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST' &&
+    isset($_POST['ajouter'])
+) {
+
+    verify_csrf();
+
+    $nom = clean($_POST['nom'] ?? '');
+    $codebarre = clean($_POST['codebarre'] ?? '');
+
+    $prix_achat = (float)($_POST['prix_achat'] ?? 0);
+    $prix_vente = (float)($_POST['prix_vente'] ?? 0);
+
+    $quantite = max(0, (int)($_POST['quantite'] ?? 0));
+
+    $seuil_alerte = max(0, (int)($_POST['seuil_alerte'] ?? 1));
+
+    $date_peremption =
+        !empty($_POST['date_peremption'])
+        ? $_POST['date_peremption']
+        : null;
+
+    $fournisseur_id =
+        !empty($_POST['fournisseur_id'])
+        ? (int)$_POST['fournisseur_id']
+        : null;
+
+    $categorie_id =
+        !empty($_POST['categorie_id'])
+        ? (int)$_POST['categorie_id']
+        : null;
+
+    if (
+        empty($nom) ||
+        $prix_achat < 0 ||
+        $prix_vente < 0
+    ) {
+
+        flash('error', 'Données invalides');
+
+        header('Location: produits.php');
+
+        exit;
+    }
+
+    $check = $pdo->prepare("
+        SELECT id
+        FROM produits
+        WHERE codebarre = ?
+        AND magasin_id = ?
+        LIMIT 1
+    ");
+
+    $check->execute([
+        $codebarre,
+        $magasin_id
+    ]);
+
+    if ($codebarre !== '' && $check->fetch()) {
+
+        flash('error', 'Code barre déjà utilisé');
+
+        header('Location: produits.php');
+
+        exit;
+    }
+
+    try {
+
+        $pdo->beginTransaction();
+
+        $stmt = $pdo->prepare("
+            INSERT INTO produits
+            (
+                magasin_id,
+                nom,
+                codebarre,
+                prix_achat,
+                prix_vente,
+                quantite,
+                seuil_alerte,
+                date_peremption,
+                fournisseur_id,
+                categorie_id,
+                created_at
+            )
+            VALUES
+            (
+                :magasin_id,
+                :nom,
+                :codebarre,
+                :prix_achat,
+                :prix_vente,
+                :quantite,
+                :seuil_alerte,
+                :date_peremption,
+                :fournisseur_id,
+                :categorie_id,
+                NOW()
+            )
+        ");
+
+        $stmt->execute([
+
+            ':magasin_id' => $magasin_id,
+
+            ':nom' => $nom,
+
+            ':codebarre' => $codebarre,
+
+            ':prix_achat' => $prix_achat,
+
+            ':prix_vente' => $prix_vente,
+
+            ':quantite' => $quantite,
+
+            ':seuil_alerte' => $seuil_alerte,
+
+            ':date_peremption' => $date_peremption,
+
+            ':fournisseur_id' => $fournisseur_id,
+
+            ':categorie_id' => $categorie_id
+        ]);
+
+        $produit_id = (int)$pdo->lastInsertId();
+
+        ajouterHistorique(
+            $pdo,
+            'AJOUT PRODUIT',
+            'Ajout produit : ' . $nom,
+            'success'
+        );
+
+        enregistrerMouvementStock(
+            $pdo,
+            $magasin_id,
+            $produit_id,
+            'entree',
+            $quantite,
+            0,
+            $quantite,
+            'Ajout nouveau produit'
+        );
+
+        $pdo->commit();
+
+        flash('success', '✅ Produit ajouté');
+
+    } catch (Throwable $e) {
+
+        $pdo->rollBack();
+
+        flash('error', 'Erreur lors de l’ajout');
+    }
+
+    header('Location: produits.php');
+
+    exit;
+}
+
+/* =========================================================
+   MODIFICATION PRODUIT
+========================================================= */
+
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST' &&
+    isset($_POST['update'])
+) {
+
+    verify_csrf();
+
+    $id = (int)($_POST['id'] ?? 0);
+
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM produits
+        WHERE id = ?
+        AND magasin_id = ?
+        LIMIT 1
+    ");
+
+    $stmt->execute([
+        $id,
+        $magasin_id
+    ]);
+
+    $ancienProduit = $stmt->fetch();
+
+    if (!$ancienProduit) {
+
+        flash('error', 'Produit introuvable');
+
+        header('Location: produits.php');
+
+        exit;
+    }
+
+    $nom = clean($_POST['nom'] ?? '');
+    $codebarre = clean($_POST['codebarre'] ?? '');
+
+    $prix_achat = (float)($_POST['prix_achat'] ?? 0);
+    $prix_vente = (float)($_POST['prix_vente'] ?? 0);
+
+    $quantite = max(0, (int)($_POST['quantite'] ?? 0));
+
+    $seuil_alerte = max(0, (int)($_POST['seuil_alerte'] ?? 1));
+
+    $date_peremption =
+        !empty($_POST['date_peremption'])
+        ? $_POST['date_peremption']
+        : null;
+
+    $fournisseur_id =
+        !empty($_POST['fournisseur_id'])
+        ? (int)$_POST['fournisseur_id']
+        : null;
+
+    $categorie_id =
+        !empty($_POST['categorie_id'])
+        ? (int)$_POST['categorie_id']
+        : null;
+
+    $check = $pdo->prepare("
+        SELECT id
+        FROM produits
+        WHERE codebarre = ?
+        AND magasin_id = ?
+        AND id != ?
+        LIMIT 1
+    ");
+
+    $check->execute([
+        $codebarre,
+        $magasin_id,
+        $id
+    ]);
+
+    if ($codebarre !== '' && $check->fetch()) {
+
+        flash('error', 'Code barre déjà utilisé');
+
+        header('Location: produits.php');
+
+        exit;
+    }
+
+    try {
+
+        $pdo->beginTransaction();
+
+        $update = $pdo->prepare("
+            UPDATE produits
+            SET
+                nom = :nom,
+                codebarre = :codebarre,
+                prix_achat = :prix_achat,
+                prix_vente = :prix_vente,
+                quantite = :quantite,
+                seuil_alerte = :seuil_alerte,
+                date_peremption = :date_peremption,
+                fournisseur_id = :fournisseur_id,
+                categorie_id = :categorie_id
+            WHERE id = :id
+            AND magasin_id = :magasin_id
+        ");
+
+        $update->execute([
+
+            ':nom' => $nom,
+
+            ':codebarre' => $codebarre,
+
+            ':prix_achat' => $prix_achat,
+
+            ':prix_vente' => $prix_vente,
+
+            ':quantite' => $quantite,
+
+            ':seuil_alerte' => $seuil_alerte,
+
+            ':date_peremption' => $date_peremption,
+
+            ':fournisseur_id' => $fournisseur_id,
+
+            ':categorie_id' => $categorie_id,
+
+            ':id' => $id,
+
+            ':magasin_id' => $magasin_id
+        ]);
+
+        ajouterHistorique(
+            $pdo,
+            'MODIFICATION PRODUIT',
+            'Produit : ' . $nom,
+            'warning'
+        );
+
+        enregistrerMouvementStock(
+            $pdo,
+            $magasin_id,
+            $id,
+            'modification',
+            $quantite,
+            (int)$ancienProduit['quantite'],
+            $quantite,
+            'Modification produit'
+        );
+
+        $pdo->commit();
+
+        flash('success', '✅ Produit modifié');
+
+    } catch (Throwable $e) {
+
+        $pdo->rollBack();
+
+        flash('error', 'Erreur modification');
+    }
+
+    header('Location: produits.php');
+
+    exit;
+}
+
+/* =========================================================
+   MOUVEMENT STOCK
+========================================================= */
+
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST' &&
+    isset($_POST['stock_action'])
+) {
+
+    verify_csrf();
+
+    $produit_id = (int)($_POST['produit_id'] ?? 0);
+
+    $quantite_action = max(
+        1,
+        (int)($_POST['quantite_action'] ?? 1)
+    );
+
+    $stock_action = clean($_POST['stock_action'] ?? '');
+
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM produits
+        WHERE id = ?
+        AND magasin_id = ?
+        LIMIT 1
+    ");
+
+    $stmt->execute([
+        $produit_id,
+        $magasin_id
+    ]);
+
+    $produit = $stmt->fetch();
+
+    if (!$produit) {
+
+        flash('error', 'Produit introuvable');
+
+        header('Location: produits.php');
+
+        exit;
+    }
+
+    $ancien_stock = (int)$produit['quantite'];
+
+    if ($stock_action === 'entree') {
+
+        $nouveau_stock =
+            $ancien_stock + $quantite_action;
+
+    } else {
+
+        $nouveau_stock =
+            max(
+                0,
+                $ancien_stock - $quantite_action
+            );
+    }
+
+    try {
+
+        $pdo->beginTransaction();
+
+        $update = $pdo->prepare("
+            UPDATE produits
+            SET quantite = ?
+            WHERE id = ?
+            AND magasin_id = ?
+        ");
+
+        $update->execute([
+            $nouveau_stock,
+            $produit_id,
+            $magasin_id
+        ]);
+
+        enregistrerMouvementStock(
+            $pdo,
+            $magasin_id,
+            $produit_id,
+            $stock_action,
+            $quantite_action,
+            $ancien_stock,
+            $nouveau_stock,
+            ucfirst($stock_action) . ' stock'
+        );
+
+        ajouterHistorique(
+            $pdo,
+            strtoupper($stock_action) . ' STOCK',
+            'Produit : ' . $produit['nom'],
+            'info'
+        );
+
+        $pdo->commit();
+
+        flash('success', '✅ Stock mis à jour');
+
+    } catch (Throwable $e) {
+
+        $pdo->rollBack();
+
+        flash('error', 'Erreur mise à jour stock');
+    }
+
+    header('Location: produits.php');
+
+    exit;
+}
+
+/* =========================================================
+   SUPPRESSION
+========================================================= */
+
+if (
+    isset($_GET['delete']) &&
+    currentUser()['role'] === 'admin'
+) {
+
+    verify_csrf();
+
+    $id = (int)$_GET['delete'];
+
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM produits
+        WHERE id = ?
+        AND magasin_id = ?
+        LIMIT 1
+    ");
+
+    $stmt->execute([
+        $id,
+        $magasin_id
+    ]);
+
+    $produit = $stmt->fetch();
+
+    if (!$produit) {
+
+        flash('error', 'Produit introuvable');
+
+        header('Location: produits.php');
+
+        exit;
+    }
+
+    try {
+
+        $pdo->beginTransaction();
+
+        ajouterHistorique(
+            $pdo,
+            'SUPPRESSION PRODUIT',
+            'Produit supprimé : ' . $produit['nom'],
+            'danger'
+        );
+
+        enregistrerMouvementStock(
+            $pdo,
+            $magasin_id,
+            $id,
+            'suppression',
+            (int)$produit['quantite'],
+            (int)$produit['quantite'],
+            0,
+            'Suppression produit'
+        );
+
+        $delete = $pdo->prepare("
+            DELETE FROM produits
+            WHERE id = ?
+            AND magasin_id = ?
+        ");
+
+        $delete->execute([
+            $id,
+            $magasin_id
+        ]);
+
+        $pdo->commit();
+
+        flash('success', '🗑 Produit supprimé');
+
+    } catch (Throwable $e) {
+
+        $pdo->rollBack();
+
+        flash('error', 'Erreur suppression');
+    }
+
+    header('Location: produits.php');
+
+    exit;
+}
+
+/* =========================================================
+   EDIT
+========================================================= */
+
+$editProduct = null;
+
+if (isset($_GET['edit'])) {
+
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM produits
+        WHERE id = ?
+        AND magasin_id = ?
+        LIMIT 1
+    ");
+
+    $stmt->execute([
+        (int)$_GET['edit'],
+        $magasin_id
+    ]);
+
+    $editProduct = $stmt->fetch();
+}
+
+/* =========================================================
+   SEARCH
+========================================================= */
+
+$search = clean($_GET['search'] ?? '');
+
+$sql = "
+SELECT
+    p.*,
+    c.nom AS categorie,
+    f.nom AS fournisseur
+FROM produits p
+LEFT JOIN categories c
+ON c.id = p.categorie_id
+LEFT JOIN fournisseurs f
+ON f.id = p.fournisseur_id
+WHERE p.magasin_id = ?
+";
+
+$params = [$magasin_id];
+
+if ($search !== '') {
+
+    $sql .= "
+        AND (
+            p.nom LIKE ?
+            OR p.codebarre LIKE ?
+        )
+    ";
+
+    $params[] = "%{$search}%";
+    $params[] = "%{$search}%";
+}
+
+$sql .= " ORDER BY p.id DESC ";
+
+$stmt = $pdo->prepare($sql);
+
+$stmt->execute($params);
+
+$produits = $stmt->fetchAll();
+
+/* =========================================================
+   STATS
+========================================================= */
+
+$totalProduits = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM produits
+    WHERE magasin_id = ?
+");
+
+$totalProduits->execute([$magasin_id]);
+
+$totalProduits = (int)$totalProduits->fetchColumn();
+
+$stockFaible = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM produits
+    WHERE magasin_id = ?
+    AND quantite <= seuil_alerte
+");
+
+$stockFaible->execute([$magasin_id]);
+
+$stockFaible = (int)$stockFaible->fetchColumn();
+
+$valeurStock = $pdo->prepare("
+    SELECT SUM(prix_achat * quantite)
+    FROM produits
+    WHERE magasin_id = ?
+");
+
+$valeurStock->execute([$magasin_id]);
+
+$valeurStock = (float)$valeurStock->fetchColumn();
+
+$categories = $pdo->query("
+    SELECT *
+    FROM categories
+    ORDER BY nom ASC
+")->fetchAll();
+
+$fournisseurs = $pdo->query("
+    SELECT *
+    FROM fournisseurs
+    ORDER BY nom ASC
+")->fetchAll();
+
+$stmtMagasin = $pdo->prepare("
+    SELECT *
+    FROM magasins
+    WHERE id = ?
+");
+
+$stmtMagasin->execute([$magasin_id]);
+
+$magasin = $stmtMagasin->fetch();
+
+include 'includes/header.php';
+include 'includes/sidebar.php';
+?>
+
+<div class="p-4 md:p-6 bg-gray-50 min-h-screen">
+
+<?php if($msg = flash('success')): ?>
+<div class="bg-green-100 border border-green-300 text-green-700 p-4 rounded-2xl mb-4 shadow">
+    <?= e($msg) ?>
+</div>
+<?php endif; ?>
+
+<?php if($msg = flash('error')): ?>
+<div class="bg-red-100 border border-red-300 text-red-700 p-4 rounded-2xl mb-4 shadow">
+    <?= e($msg) ?>
+</div>
+<?php endif; ?>
+
+<div class="flex flex-col lg:flex-row justify-between lg:items-center gap-4 mb-6">
+
+    <div>
+
+        <h1 class="text-4xl font-black text-gray-800">
+            📦 Gestion Produits
+        </h1>
+
+        <p class="text-gray-500 mt-1">
+            Gestion sécurisée du stock
+        </p>
+
+    </div>
+
+    <div class="flex gap-3 flex-wrap">
+
+        <button
+        onclick="toggleProduitForm()"
+        class="bg-black hover:bg-gray-800 text-white px-6 py-3 rounded-2xl shadow">
+
+            ➕ Ajouter Produit
+
+        </button>
+
+        <div class="bg-blue-100 text-blue-700 px-5 py-3 rounded-2xl font-bold shadow">
+
+            🏬 <?= e($magasin['nom'] ?? 'Magasin') ?>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="grid md:grid-cols-3 gap-5 mb-8">
+
+    <div class="bg-white rounded-3xl shadow border p-6">
+
+        <p class="text-gray-500 text-sm">
+            Produits
+        </p>
+
+        <h2 class="text-4xl font-black text-gray-800 mt-2">
+            <?= $totalProduits ?>
+        </h2>
+
+    </div>
+
+    <div class="bg-white rounded-3xl shadow border p-6">
+
+        <p class="text-gray-500 text-sm">
+            Stock faible
+        </p>
+
+        <h2 class="text-4xl font-black text-red-600 mt-2">
+            <?= $stockFaible ?>
+        </h2>
+
+    </div>
+
+    <div class="bg-white rounded-3xl shadow border p-6">
+
+        <p class="text-gray-500 text-sm">
+            Valeur stock
+        </p>
+
+        <h2 class="text-4xl font-black text-green-600 mt-2">
+            <?= number_format($valeurStock,2) ?>
+        </h2>
+
+    </div>
+
+</div>
+
+<!-- SEARCH -->
+
+<div class="bg-white rounded-3xl shadow border p-5 mb-6">
+
+<form method="GET" class="flex flex-col md:flex-row gap-3">
+
+    <input
+    type="text"
+    name="search"
+    value="<?= e($search) ?>"
+    placeholder="🔍 Recherche produit..."
+    class="border-2 border-gray-200 focus:border-black outline-none p-4 rounded-2xl w-full">
+
+    <button
+    class="bg-black hover:bg-gray-800 text-white px-6 rounded-2xl">
+
+        Rechercher
+
+    </button>
+
+</form>
+
+</div>
+
+<!-- FORM -->
+
+<div
+id="productForm"
+class="<?= $editProduct ? '' : 'hidden' ?> bg-white rounded-3xl shadow border p-6 mb-8">
+
+<h2 class="text-3xl font-black mb-6">
+
+    <?= $editProduct ? '✏ Modifier Produit' : '➕ Nouveau Produit' ?>
+
+</h2>
+
+<form method="POST" class="grid md:grid-cols-2 gap-5">
+
+<input
+type="hidden"
+name="csrf_token"
+value="<?= csrf_token() ?>">
+
+<?php if($editProduct): ?>
+
+<input
+type="hidden"
+name="id"
+value="<?= $editProduct['id'] ?>">
+
+<?php endif; ?>
+
+<div>
+
+<label class="font-semibold block mb-2">
+Nom produit
+</label>
+
+<input
+type="text"
+name="nom"
+required
+maxlength="255"
+value="<?= e($editProduct['nom'] ?? '') ?>"
+class="border-2 border-gray-200 focus:border-black outline-none p-4 rounded-2xl w-full">
+
+</div>
+
+<div>
+
+<label class="font-semibold block mb-2">
+Code barre
+</label>
+
+<input
+type="text"
+name="codebarre"
+maxlength="100"
+value="<?= e($editProduct['codebarre'] ?? '') ?>"
+class="border-2 border-gray-200 focus:border-black outline-none p-4 rounded-2xl w-full">
+
+</div>
+
+<div>
+
+<label class="font-semibold block mb-2">
+Prix achat
+</label>
+
+<input
+type="number"
+step="0.01"
+min="0"
+name="prix_achat"
+required
+value="<?= e($editProduct['prix_achat'] ?? '') ?>"
+class="border-2 border-gray-200 focus:border-black outline-none p-4 rounded-2xl w-full">
+
+</div>
+
+<div>
+
+<label class="font-semibold block mb-2">
+Prix vente
+</label>
+
+<input
+type="number"
+step="0.01"
+min="0"
+name="prix_vente"
+required
+value="<?= e($editProduct['prix_vente'] ?? '') ?>"
+class="border-2 border-gray-200 focus:border-black outline-none p-4 rounded-2xl w-full">
+
+</div>
+
+<div>
+
+<label class="font-semibold block mb-2">
+Quantité
+</label>
+
+<input
+type="number"
+min="0"
+name="quantite"
+required
+value="<?= e($editProduct['quantite'] ?? 0) ?>"
+class="border-2 border-gray-200 focus:border-black outline-none p-4 rounded-2xl w-full">
+
+</div>
+
+<div>
+
+<label class="font-semibold block mb-2">
+Seuil alerte
+</label>
+
+<input
+type="number"
+min="0"
+name="seuil_alerte"
+required
+value="<?= e($editProduct['seuil_alerte'] ?? 1) ?>"
+class="border-2 border-gray-200 focus:border-black outline-none p-4 rounded-2xl w-full">
+
+</div>
+
+<div>
+
+<label class="font-semibold block mb-2">
+Date péremption
+</label>
+
+<input
+type="date"
+name="date_peremption"
+value="<?= e($editProduct['date_peremption'] ?? '') ?>"
+class="border-2 border-gray-200 focus:border-black outline-none p-4 rounded-2xl w-full">
+
+</div>
+
+<div>
+
+<label class="font-semibold block mb-2">
+Catégorie
+</label>
+
+<select
+name="categorie_id"
+class="border-2 border-gray-200 focus:border-black outline-none p-4 rounded-2xl w-full">
+
+<option value="">
+Catégorie
+</option>
+
+<?php foreach($categories as $c): ?>
+
+<option
+value="<?= $c['id'] ?>"
+<?= (($editProduct['categorie_id'] ?? '') == $c['id']) ? 'selected' : '' ?>>
+
+<?= e($c['nom']) ?>
+
+</option>
+
+<?php endforeach; ?>
+
+</select>
+
+</div>
+
+<div class="md:col-span-2">
+
+<label class="font-semibold block mb-2">
+Fournisseur
+</label>
+
+<select
+name="fournisseur_id"
+class="border-2 border-gray-200 focus:border-black outline-none p-4 rounded-2xl w-full">
+
+<option value="">
+Fournisseur
+</option>
+
+<?php foreach($fournisseurs as $f): ?>
+
+<option
+value="<?= $f['id'] ?>"
+<?= (($editProduct['fournisseur_id'] ?? '') == $f['id']) ? 'selected' : '' ?>>
+
+<?= e($f['nom']) ?>
+
+</option>
+
+<?php endforeach; ?>
+
+</select>
+
+</div>
+
+<div class="md:col-span-2 flex flex-wrap gap-3 mt-3">
+
+<?php if($editProduct): ?>
+
+<button
+type="submit"
+name="update"
+class="bg-blue-600 hover:bg-blue-700 text-white px-7 py-4 rounded-2xl shadow">
+
+💾 Modifier
+
+</button>
+
+<a
+href="produits.php"
+class="bg-gray-200 hover:bg-gray-300 px-7 py-4 rounded-2xl">
+
+Annuler
+
+</a>
+
+<?php else: ?>
+
+<button
+type="submit"
+name="ajouter"
+class="bg-green-600 hover:bg-green-700 text-white px-7 py-4 rounded-2xl shadow">
+
+✅ Ajouter Produit
+
+</button>
+
+<?php endif; ?>
+
+</div>
+
+</form>
+
+</div>
+
+<!-- PRODUITS -->
+
+<div class="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
+
+<?php foreach($produits as $p): ?>
+
+<?php $badge = stockBadge((int)$p['quantite'], (int)$p['seuil_alerte']); ?>
+
+<div class="bg-white rounded-3xl shadow-lg border overflow-hidden hover:shadow-2xl transition">
+
+<div class="p-6">
+
+<div class="flex justify-between items-start mb-4">
+
+<div>
+
+<h2 class="font-black text-2xl text-gray-800">
+<?= e($p['nom']) ?>
+</h2>
+
+<div class="text-sm text-gray-500 mt-1">
+<?= e($p['codebarre']) ?>
+</div>
+
+</div>
+
+<span class="bg-gray-100 px-3 py-2 rounded-2xl text-xs font-bold">
+
+#<?= $p['id'] ?>
+
+</span>
+
+</div>
+
+<div class="flex items-center justify-between mb-5">
+
+<span class="px-4 py-2 rounded-full text-sm font-bold <?= $badge['class'] ?>">
+
+<?= $badge['text'] ?> :
+<?= (int)$p['quantite'] ?>
+
+</span>
+
+<?php if($p['date_peremption']): ?>
+
+<span class="text-xs text-gray-500">
+
+⏳ <?= e($p['date_peremption']) ?>
+
+</span>
+
+<?php endif; ?>
+
+</div>
+
+<div class="space-y-3 text-sm mb-6">
+
+<div class="flex justify-between">
+<span>💰 Vente</span>
+<b><?= number_format((float)$p['prix_vente'],2) ?></b>
+</div>
+
+<div class="flex justify-between">
+<span>📦 Achat</span>
+<b><?= number_format((float)$p['prix_achat'],2) ?></b>
+</div>
+
+<div class="flex justify-between">
+<span>📊 Valeur</span>
+
+<b class="text-green-600">
+
+<?= number_format(
+((float)$p['prix_achat'] * (int)$p['quantite']),
+2
+) ?>
+
+</b>
+
+</div>
+
+<div class="flex justify-between">
+<span>🏷 Catégorie</span>
+<b><?= e($p['categorie'] ?? '-') ?></b>
+</div>
+
+<div class="flex justify-between">
+<span>🚚 Fournisseur</span>
+<b><?= e($p['fournisseur'] ?? '-') ?></b>
+</div>
+
+</div>
+
+<!-- STOCK -->
+
+<form method="POST" class="mb-5">
+
+<input
+type="hidden"
+name="csrf_token"
+value="<?= csrf_token() ?>">
+
+<input
+type="hidden"
+name="produit_id"
+value="<?= $p['id'] ?>">
+
+<div class="flex gap-2">
+
+<button
+type="submit"
+name="stock_action"
+value="sortie"
+class="bg-red-500 hover:bg-red-600 text-white px-5 rounded-2xl">
+
+-
+
+</button>
+
+<input
+type="number"
+name="quantite_action"
+value="1"
+min="1"
+class="border-2 border-gray-200 p-3 rounded-2xl w-full text-center font-bold">
+
+<button
+type="submit"
+name="stock_action"
+value="entree"
+class="bg-green-500 hover:bg-green-600 text-white px-5 rounded-2xl">
+
++
+
+</button>
+
+</div>
+
+</form>
+
+<div class="grid grid-cols-2 gap-3">
+
+<a
+href="?edit=<?= $p['id'] ?>"
+class="bg-blue-600 hover:bg-blue-700 text-white text-center p-4 rounded-2xl font-semibold">
+
+✏ Modifier
+
+</a>
+
+<?php if(currentUser()['role'] === 'admin'): ?>
+
+<a
+href="?delete=<?= $p['id'] ?>&csrf_token=<?= csrf_token() ?>"
+onclick="return confirm('Supprimer ce produit ?')"
+class="bg-red-600 hover:bg-red-700 text-white text-center p-4 rounded-2xl font-semibold">
+
+🗑 Supprimer
+
+</a>
+
+<?php endif; ?>
+
+</div>
+
+</div>
+
+</div>
+
+<?php endforeach; ?>
+
+</div>
+
+<?php if(empty($produits)): ?>
+
+<div class="bg-white rounded-3xl shadow border p-12 text-center mt-6">
+
+<div class="text-6xl mb-4">
+📦
+</div>
+
+<h2 class="text-2xl font-black text-gray-700 mb-2">
+Aucun produit trouvé
+</h2>
+
+<p class="text-gray-500">
+Ajoutez votre premier produit maintenant.
+</p>
+
+</div>
+
+<?php endif; ?>
+
+</div>
+
+<script>
+
+function toggleProduitForm(){
+
+    const form =
+        document.getElementById('productForm');
+
+    form.classList.toggle('hidden');
+
+    window.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+    });
+}
+
+</script>
+
+<?php include 'includes/footer.php'; ?>
