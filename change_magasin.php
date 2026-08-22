@@ -11,7 +11,7 @@ $user = currentUser();
    ADMIN SEULEMENT
 ========================================================= */
 
-if(($user['role'] ?? '') !== 'admin'){
+if(!isAdmin()){
 
     exit("
     <div style='padding:30px;font-family:sans-serif'>
@@ -90,21 +90,33 @@ if(
        VERIFIER EXISTENCE
     ========================================= */
 
-$currentMagasin = currentMagasin();
-echo currentMagasin()['nom'];
+    if (!canAccessMagasin($nouveau_magasin)) {
+        flash(
+            'error',
+            '⛔ Magasin non autorisé'
+        );
+
+        header("Location:change_magasin.php");
+        exit;
+    }
+
+    $stmtMagasin = $pdo->prepare("SELECT id FROM magasins WHERE id=? AND statut='actif' LIMIT 1");
+    $stmtMagasin->execute([$nouveau_magasin]);
+
+    if (!$stmtMagasin->fetch()) {
+        flash(
+            'error',
+            '⛔ Magasin introuvable ou inactif'
+        );
+
+        header("Location:change_magasin.php");
+        exit;
+    }
+
     /* =========================================
        METTRE A JOUR UTILISATEUR
     ========================================= */
-$_SESSION['magasin_actif'] = $nouveau_magasin;
-
-refreshUserSession();
-
-    /* =========================================
-       SESSION ACTIVE
-    ========================================= */
-
-    $_SESSION['user']['magasin_id'] =
-        $nouveau_magasin;
+    setMagasinActif($nouveau_magasin);
 
     /* =========================================
        SUCCESS
@@ -123,16 +135,7 @@ refreshUserSession();
    LISTE MAGASINS
 ========================================================= */
 
-$stmt = $pdo->prepare("
-    SELECT *
-    FROM magasins
-    ORDER BY nom ASC
-");
-
-$stmt->execute();
-
-$magasins =
-    $stmt->fetchAll();
+$magasins = getUserMagasins();
 
 /* =========================================================
    MAGASIN ACTUEL
@@ -218,7 +221,7 @@ include 'includes/sidebar.php';
 
 ?>
 
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="assets/tailwind.css">
 
 <div class="p-6 bg-slate-100 min-h-screen">
 

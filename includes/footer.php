@@ -11,7 +11,7 @@ $magasinNom = "Magasin Principal";
 $magasinAdresse = $settings['adresse'] ?? '';
 $magasinTelephone = $settings['telephone'] ?? '';
 
-if(!empty($user['magasin_id'])){
+if(currentMagasinId() > 0){
 
     global $pdo;
 
@@ -23,7 +23,7 @@ if(!empty($user['magasin_id'])){
     ");
 
     $stmt->execute([
-        $user['magasin_id']
+        currentMagasinId()
     ]);
 
     $magasin = $stmt->fetch();

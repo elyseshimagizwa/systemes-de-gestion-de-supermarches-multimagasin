@@ -24,7 +24,7 @@ $isAdmin =
     ($user['role'] ?? '') === 'admin';
 
 $magasin_id =
-    (int)($user['magasin_id'] ?? 0);
+    (int)currentMagasinId();
 
 if($magasin_id <= 0){
 
@@ -41,52 +41,6 @@ if($magasin_id <= 0){
 
 $search =
     trim($_GET['search'] ?? '');
-
-/* =========================================================
-   FERMETURE AUTO
-========================================================= */
-
-$autoClose = $pdo->prepare("
-    UPDATE sessions_caisse
-    SET
-
-        total_ventes = (
-            SELECT COALESCE(SUM(total),0)
-            FROM ventes
-            WHERE ventes.magasin_id = sessions_caisse.magasin_id
-            AND ventes.date_vente >= sessions_caisse.date_ouverture
-        ),
-
-        montant_attendu =
-            solde_depart +
-            (
-                SELECT COALESCE(SUM(total),0)
-                FROM ventes
-                WHERE ventes.magasin_id = sessions_caisse.magasin_id
-                AND ventes.date_vente >= sessions_caisse.date_ouverture
-            ),
-
-        montant_reel =
-            solde_depart +
-            (
-                SELECT COALESCE(SUM(total),0)
-                FROM ventes
-                WHERE ventes.magasin_id = sessions_caisse.magasin_id
-                AND ventes.date_vente >= sessions_caisse.date_ouverture
-            ),
-
-        difference_caisse = 0,
-
-        statut='fermee',
-        statut_validation='auto',
-
-        date_fermeture=NOW()
-
-    WHERE statut='ouverte'
-    AND DATE(date_ouverture) < CURDATE()
-");
-
-$autoClose->execute();
 
 /* =========================================================
    MAGASIN
@@ -195,20 +149,27 @@ if($isAdmin){
 if(
     $isAdmin
     &&
-    isset($_GET['valider'])
+    $_SERVER['REQUEST_METHOD'] === 'POST'
+    &&
+    isset($_POST['valider'])
 ){
 
+    verify_csrf();
+
     $id =
-        (int)$_GET['valider'];
+        (int)$_POST['valider'];
 
     $stmtCheck = $pdo->prepare("
         SELECT id
         FROM sessions_caisse
         WHERE id=?
+        AND magasin_id=?
+        AND statut='fermee'
+        AND statut_validation='attente'
         LIMIT 1
     ");
 
-    $stmtCheck->execute([$id]);
+    $stmtCheck->execute([$id, $magasin_id]);
 
     if($stmtCheck->fetch()){
 
@@ -222,11 +183,13 @@ if(
         date_validation=NOW()
 
     WHERE id=?
+    AND magasin_id=?
 ");
 
 $valider->execute([
     $user['id'],
-    $id
+    $id,
+    $magasin_id
 ]);
 
         flash(
@@ -255,7 +218,7 @@ if(
     FROM sessions_caisse
     WHERE utilisateur_id=?
     AND magasin_id=?
-    AND DATE(date_ouverture)=CURDATE()
+    AND statut='ouverte'
     LIMIT 1
 ");
 
@@ -280,6 +243,12 @@ if(
 
     $reste_veille =
         (float)($_POST['reste_veille'] ?? 0);
+
+    if ($montant_initial < 0 || $reste_veille < 0) {
+        flash('error', 'Les montants d’ouverture ne peuvent pas être négatifs.');
+        header("Location:sessions_caisse.php");
+        exit;
+    }
 
     $solde_depart =
         $montant_initial +
@@ -361,7 +330,7 @@ if(
 
     $montant_reel =
         (float)$_POST['montant_reel'];
-        if($montant_reel <= 0){
+        if($montant_reel < 0){
 
     flash(
         'error',
@@ -375,22 +344,29 @@ if(
     $commentaire =
         trim($_POST['commentaire_ecart'] ?? '');
 
+    $pdo->beginTransaction();
+
     $stmt = $pdo->prepare("
         SELECT *
         FROM sessions_caisse
         WHERE id=?
+        AND magasin_id=?
         AND statut='ouverte'
         LIMIT 1
+        FOR UPDATE
     ");
 
     $stmt->execute([
-        $session_id
+        $session_id,
+        $magasin_id
     ]);
 
     $session =
         $stmt->fetch();
 
     if(!$session){
+
+        $pdo->rollBack();
 
         flash(
             'error',
@@ -407,6 +383,8 @@ if(
         $session['utilisateur_id'] != $user['id']
     ){
 
+        $pdo->rollBack();
+
         flash(
             'error',
             '⛔ Action refusée'
@@ -417,24 +395,52 @@ if(
     }
 
     $stmtVentes = $pdo->prepare("
-        SELECT COALESCE(SUM(total),0)
+        SELECT
+            COALESCE(SUM(total),0) AS total_ventes,
+            COALESCE(SUM(
+                CASE
+                    WHEN mode_paiement='Espèces'
+                    THEN montant_recu - monnaie
+                    ELSE 0
+                END
+            ),0) AS especes
         FROM ventes
-        WHERE magasin_id=?
-        AND date_vente >= ?
+        WHERE session_caisse_id=?
     ");
 
     $stmtVentes->execute([
-        $session['magasin_id'],
-        $session['date_ouverture']
+        $session_id
     ]);
 
-    $total_ventes =
-        (float)$stmtVentes->fetchColumn();
+    $venteTotals = $stmtVentes->fetch();
+
+    $total_ventes = (float)$venteTotals['total_ventes'];
+    $especes = (float)$venteTotals['especes'];
+
+    $stmtMouvements = $pdo->prepare("
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN type='recette' THEN montant
+                WHEN type='depense' THEN -montant
+                ELSE 0
+            END
+        ),0)
+        FROM transactions_financieres
+        WHERE session_caisse_id=?
+    ");
+
+    $stmtMouvements->execute([
+        $session_id
+    ]);
+
+    $mouvementsFinanciers = (float)$stmtMouvements->fetchColumn();
 
     $montant_attendu =
         (float)$session['solde_depart']
         +
-        $total_ventes;
+        $especes
+        +
+        $mouvementsFinanciers;
 
     $difference =
         $montant_reel
@@ -444,10 +450,10 @@ if(
     if(abs($difference) > 0){
 
         $statutFinal =
-            'en_attente_validation';
+            'fermee';
 
         $statutValidation =
-            'en_attente_validation';
+            'attente';
 
     }else{
 
@@ -474,6 +480,8 @@ if(
             statut_validation=?
 
         WHERE id=?
+        AND magasin_id=?
+        AND statut='ouverte'
     ");
 
     $update->execute([
@@ -487,8 +495,11 @@ if(
         $statutFinal,
         $statutValidation,
 
-        $session_id
+        $session_id,
+        $magasin_id
     ]);
+
+    $pdo->commit();
 
     flash(
         'success',
@@ -518,12 +529,7 @@ SELECT
     (
         SELECT COUNT(*)
         FROM ventes v
-        WHERE v.magasin_id = sc.magasin_id
-        AND v.date_vente >= sc.date_ouverture
-        AND (
-            sc.date_fermeture IS NULL
-            OR v.date_vente <= sc.date_fermeture
-        )
+        WHERE v.session_caisse_id = sc.id
     ) AS nb_recus
 
 FROM sessions_caisse sc
@@ -670,7 +676,7 @@ include 'includes/header.php';
 include 'includes/sidebar.php';
 ?>
 
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="assets/tailwind.css">
 
 <div class="p-6 bg-slate-100 dark:bg-slate-900 min-h-screen">
 
@@ -769,9 +775,7 @@ $nbAttente = 0;
 foreach($sessions as $tmp){
 
     if(
-        $tmp['statut']=='en_attente_validation'
-        ||
-        $tmp['statut_validation']=='en_attente_validation'
+        $tmp['statut_validation']=='attente'
     ){
         $nbAttente++;
     }
@@ -1097,7 +1101,7 @@ foreach($sessions as $tmp){
 🟢 Ouverte
 </span>
 
-<?php elseif($s['statut']=='en_attente_validation'): ?>
+<?php elseif($s['statut_validation']=='attente'): ?>
 
 <span class="bg-orange-100 text-orange-700 px-3 py-1 rounded-full">
 ⏳ Contrôle
@@ -1121,17 +1125,7 @@ foreach($sessions as $tmp){
 ✅ Validée
 </span>
 
-<?php elseif($s['statut_validation']=='auto'): ?>
-
-<span class="bg-blue-100 text-blue-700 px-3 py-1 rounded-full">
-🤖 Auto
-</span>
-
-<?php elseif(
-$s['statut_validation']=='attente'
-||
-$s['statut_validation']=='en_attente_validation'
-): ?>
+<?php elseif($s['statut_validation']=='attente'): ?>
 
 <span class="bg-orange-100 text-orange-700 px-3 py-1 rounded-full">
 ⚠️ Vérifier
@@ -1202,25 +1196,19 @@ class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl"
 
 <?php endif; ?>
 
-<?php if(
-$isAdmin
-&&
-(
-$s['statut']=='en_attente_validation'
-||
-$s['statut_validation']=='en_attente_validation'
-||
-$s['statut_validation']=='attente'
-)
-): ?>
+<?php if($isAdmin && $s['statut_validation']=='attente'): ?>
 
-<a
-href="?valider=<?= (int)$s['id'] ?>"
-onclick="return confirm('Valider cette session ?')"
+<form method="POST" onsubmit="return confirm('Valider cette session ?')">
+<input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+<button
+type="submit"
+name="valider"
+value="<?= (int)$s['id'] ?>"
 class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl font-bold"
 >
 ✅ Valider
-</a>
+</button>
+</form>
 
 <?php endif; ?>
 
@@ -1439,6 +1427,18 @@ function ouvrirDetails(id)
         </div>
 
     </div>
+
+    <div class="grid md:grid-cols-2 gap-5 mt-6">
+        <div>
+            <strong>✅ Validé par</strong><br>
+            ${box.dataset.validateur}
+        </div>
+
+        <div>
+            <strong>📅 Date validation</strong><br>
+            ${box.dataset.datevalidation}
+        </div>
+    </div>
     `;
 
     document.getElementById(
@@ -1499,15 +1499,6 @@ function fermerModal()
         .getElementById('modalFermeture')
         .classList.remove('flex');
 }
-<div>
-    <strong>✅ Validé par</strong><br>
-    ${box.dataset.validateur}
-</div>
-
-<div>
-    <strong>📅 Date validation</strong><br>
-    ${box.dataset.datevalidation}
-</div>
 
 </script>
 

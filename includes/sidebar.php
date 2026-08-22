@@ -8,10 +8,12 @@ $isAdmin =
 $isCaissier =
     ($user['role'] ?? '') === 'caissier';
 
-$isManager =
-    ($user['role'] ?? '') === 'manager';
+$isManager = false;
 
 $settings = getSettings();
+$assetBasePath = basename(dirname($_SERVER['PHP_SELF'])) === 'backups'
+    ? '../assets'
+    : 'assets';
 
 /* =========================================================
    MAGASIN
@@ -53,7 +55,7 @@ function isActivePage($page, $currentPage)
 ?>
 
 <link rel="stylesheet"
-href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+href="<?= e($assetBasePath) ?>/vendor/fontawesome.min.css">
 
 <style>
 

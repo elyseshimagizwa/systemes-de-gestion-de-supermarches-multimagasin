@@ -19,18 +19,15 @@ $user = currentUser();
 =            ROLES
 ==================================================*/
 
-$isSuperAdmin =
-    $user['role'] === 'super_admin';
+$isSuperAdmin = false;
 
-$isGlobalAdmin =
-    $user['role'] === 'global_admin';
+$isGlobalAdmin = isAdmin();
 
 $isAdmin =
     in_array(
         $user['role'],
         [
-            'super_admin',
-            'global_admin',
+            'admin',
             'admin'
         ]
     );

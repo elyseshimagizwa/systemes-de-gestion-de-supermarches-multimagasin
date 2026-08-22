@@ -11,8 +11,8 @@ $details = [];
 if (isset($_GET['search'])) {
     $id = (int)$_GET['search'];
 
-    $stmt = $pdo->prepare("SELECT * FROM ventes WHERE id=?");
-    $stmt->execute([$id]);
+    $stmt = $pdo->prepare("SELECT * FROM ventes WHERE id=? AND magasin_id=?");
+    $stmt->execute([$id, currentMagasinId()]);
     $vente = $stmt->fetch();
 
     if ($vente) {
@@ -35,11 +35,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['retour'])) {
     $pdo->beginTransaction();
     try {
         // ligne vente
+        $venteCheck = $pdo->prepare("SELECT id FROM ventes WHERE id=? AND magasin_id=? FOR UPDATE");
+        $venteCheck->execute([$vente_id, currentMagasinId()]);
+        if (!$venteCheck->fetch()) {
+            throw new Exception('Vente introuvable ou magasin non autorisé');
+        }
+
         $lv = $pdo->prepare("SELECT * FROM ligne_ventes WHERE vente_id=? AND produit_id=?");
         $lv->execute([$vente_id,$produit_id]);
         $line = $lv->fetch();
 
-        if (!$line || $quantite <= 0 || $quantite > $line['quantite']) {
+        $returned = $pdo->prepare("SELECT COALESCE(SUM(quantite),0) FROM retours WHERE vente_id=? AND produit_id=?");
+        $returned->execute([$vente_id, $produit_id]);
+        $remaining = $line ? (int)$line['quantite'] - (int)$returned->fetchColumn() : 0;
+
+        if (!$line || $quantite <= 0 || $quantite > $remaining) {
             throw new Exception('Quantité invalide');
         }
 
@@ -47,21 +57,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['retour'])) {
         $remboursement = $line['prix_unitaire'] * $quantite;
 
         // stock actuel
-        $p = $pdo->prepare("SELECT quantite FROM produits WHERE id=? FOR UPDATE");
-        $p->execute([$produit_id]);
+        $p = $pdo->prepare("SELECT quantite FROM produits WHERE id=? AND magasin_id=? FOR UPDATE");
+        $p->execute([$produit_id, currentMagasinId()]);
         $old = $p->fetchColumn();
         $new = $old + $quantite;
 
-        $pdo->prepare("UPDATE produits SET quantite=? WHERE id=?")->execute([$new,$produit_id]);
+        $pdo->prepare("UPDATE produits SET quantite=? WHERE id=? AND magasin_id=?")->execute([$new,$produit_id,currentMagasinId()]);
 
         // retour
         $pdo->prepare("INSERT INTO retours (vente_id,produit_id,quantite,motif) VALUES (?,?,?,?)")
             ->execute([$vente_id,$produit_id,$quantite,$motif]);
 
         // mouvement stock
-        $pdo->prepare("INSERT INTO stock_mouvements (produit_id,type,quantite,ancien_stock,nouveau_stock,motif,utilisateur_id)
-        VALUES (?,?,?,?,?,?,?)")
-        ->execute([$produit_id,'retour_client',$quantite,$old,$new,$motif,currentUser()['id']]);
+        $pdo->prepare("INSERT INTO stock_mouvements (produit_id,magasin_id,type,quantite,ancien_stock,nouveau_stock,motif,utilisateur_id)
+        VALUES (?,?,?,?,?,?,?,?)")
+            ->execute([$produit_id,currentMagasinId(),'retour_client',$quantite,$old,$new,$motif,currentUser()['id']]);
 
         $pdo->commit();
         flash('success','Retour traité avec succès');

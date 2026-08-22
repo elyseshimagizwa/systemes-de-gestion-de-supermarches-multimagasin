@@ -5,7 +5,7 @@ require_once 'config.php';
 require_once 'config-settings.php';
 
 requireLogin();
-requireAdmin();
+requireCaissier();
 
 $settings = getSettings();
 
@@ -90,6 +90,11 @@ if($magasinId){
         $magasinId;
 }
 
+if (!isAdmin()) {
+    $where[] = "h.magasin_id=".(int)currentMagasinId();
+    $magasinId = (string)currentMagasinId();
+}
+
 /* =========================================
    TYPE
 ========================================= */
@@ -155,21 +160,31 @@ $historiques =
    USERS
 ========================================= */
 
-$users = $pdo->query("
+$usersSql = "
     SELECT id, nom
     FROM utilisateurs
-    ORDER BY nom ASC
-")->fetchAll();
+    ";
+
+if (!isAdmin()) {
+    $usersSql .= " WHERE magasin_id=".(int)currentMagasinId();
+}
+
+$users = $pdo->query($usersSql." ORDER BY nom ASC")->fetchAll();
 
 /* =========================================
    MAGASINS
 ========================================= */
 
-$magasins = $pdo->query("
+$magasinsSql = "
     SELECT id, nom
     FROM magasins
-    ORDER BY nom ASC
-")->fetchAll();
+    ";
+
+if (!isAdmin()) {
+    $magasinsSql .= " WHERE id=".(int)currentMagasinId();
+}
+
+$magasins = $pdo->query($magasinsSql." ORDER BY nom ASC")->fetchAll();
 
 /* =========================================
    STATS
@@ -217,8 +232,8 @@ include 'includes/sidebar.php';
 
 ?>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.tailwindcss.com"></script>
+<script src="assets/vendor/chart.min.js"></script>
+<link rel="stylesheet" href="assets/tailwind.css">
 
 <style>
 

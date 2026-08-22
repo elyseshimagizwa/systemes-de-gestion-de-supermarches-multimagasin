@@ -37,37 +37,24 @@ $isCaissier =
 ========================================================= */
 
 $magasin_id =
-    $user['magasin_id'] ?? null;
+    (int)currentMagasinId();
+
+$selectedMagasinId = (int)($_GET['magasin_id'] ?? 0);
+
+if ($isAdmin && $selectedMagasinId > 0 && canAccessMagasin($selectedMagasinId)) {
+    $magasin_id = $selectedMagasinId;
+    setMagasinActif($selectedMagasinId);
+}
 
 $magasin = null;
 
-if ($magasin_id) {
-
-    $stmtMag = $pdo->prepare("
-        SELECT *
-        FROM magasins
-        WHERE id=?
-        LIMIT 1
-    ");
-
+if ($magasin_id > 0) {
+    $stmtMag = $pdo->prepare("SELECT * FROM magasins WHERE id=? AND statut='actif' LIMIT 1");
     $stmtMag->execute([$magasin_id]);
-
     $magasin = $stmtMag->fetch();
 }
 
-$isGlobalAdmin = false;
-
-if ($isAdmin) {
-
-    if (
-        isset($_GET['global'])
-        &&
-        $_GET['global'] == 1
-    ) {
-
-        $isGlobalAdmin = true;
-    }
-}
+$isGlobalAdmin = $isAdmin && $magasin_id <= 0;
 
 /* =========================================================
    FILTRES
@@ -109,6 +96,20 @@ if (!$isGlobalAdmin && $magasin_id) {
     $paramsSession[] = $magasin_id;
 }
 
+if ($isAdmin && $magasin_id > 0) {
+    $whereVente = " AND v.magasin_id=? ";
+    $whereProduit = " AND p.magasin_id=? ";
+    $whereTransaction = " AND magasin_id=? ";
+    $whereUtilisateur = " AND u.magasin_id=? ";
+    $whereSession = " AND magasin_id=? ";
+
+    $paramsVente[] = $magasin_id;
+    $paramsProduit[] = $magasin_id;
+    $paramsTransaction[] = $magasin_id;
+    $paramsUtilisateur[] = $magasin_id;
+    $paramsSession[] = $magasin_id;
+}
+
 /* =========================================================
    SETTINGS
 ========================================================= */
@@ -125,18 +126,6 @@ $devise =
 
 
 if (isset($_GET['ajax'])) {
-
-$cacheFile = __DIR__.'/cache/dashboard_kpi.json';
-
-if(
-    file_exists($cacheFile)
-    &&
-    time() - filemtime($cacheFile) < 30
-){
-    echo file_get_contents($cacheFile);
-    exit;
-}
-
 
     header('Content-Type: application/json');
 
@@ -365,15 +354,6 @@ $response['produits'] =
     $stmtProduits->fetchColumn();
 
         $json = json_encode($response);
-
-if(!is_dir(__DIR__.'/cache')){
-    mkdir(__DIR__.'/cache');
-}
-
-file_put_contents(
-    $cacheFile,
-    $json
-);
 
 echo $json;
 
@@ -659,25 +639,23 @@ $stmt->execute($paramsVente);
 
 $sqlSession = "
     SELECT id
-
     FROM sessions_caisse
-
-    WHERE utilisateur_id=?
-    AND statut='ouverte'
-    $whereSession
-
-    LIMIT 1
+    WHERE statut='ouverte'
 ";
 
-$paramsSessionFull = [
-    $user['id']
-];
+$paramsSessionFull = [];
 
-if (!$isGlobalAdmin && $magasin_id) {
-
-    $paramsSessionFull[] =
-        $magasin_id;
+if ($isCaissier) {
+    $sqlSession .= " AND utilisateur_id=?";
+    $paramsSessionFull[] = $user['id'];
 }
+
+if ($magasin_id > 0) {
+    $sqlSession .= " AND magasin_id=?";
+    $paramsSessionFull[] = $magasin_id;
+}
+
+$sqlSession .= " LIMIT 1";
 
 $stmt = $pdo->prepare($sqlSession);
 
@@ -1189,7 +1167,7 @@ include 'includes/sidebar.php';
 
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="assets/vendor/chart.min.js"></script>
 
 <script>
 

@@ -70,10 +70,7 @@ $params = [];
 
 // FILTRE OBLIGATOIRE : Uniquement le magasin de l'utilisateur connecté
 $isGlobalAdmin =
-    in_array(
-        $user['role'],
-        ['super_admin','admin']
-    );
+    isAdmin();
 
 $magasin_id =
     (int)($user['magasin_id'] ?? 0);
@@ -157,11 +154,16 @@ $stmt->execute($params);
 $ventes = $stmt->fetchAll(PDO::FETCH_ASSOC); // FETCH_ASSOC évite les doublons d'index numériques
 
 /* LISTE DES UTILISATEURS POUR LE FORMULAIRE DE FILTRE */
-$users = $pdo->query("
+$usersSql = "
     SELECT id, nom
     FROM utilisateurs
-    ORDER BY nom ASC
-")->fetchAll(PDO::FETCH_ASSOC);
+    ";
+
+if (!$isGlobalAdmin) {
+    $usersSql .= " WHERE magasin_id=".(int)$magasin_id;
+}
+
+$users = $pdo->query($usersSql." ORDER BY nom ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 
 $magasins = [];

@@ -5,6 +5,37 @@ requireRole('admin');
 
 $user = currentUser();
 
+function generateMagasinCode($pdo, $excludedId = null)
+{
+    $sql = "SELECT code FROM magasins WHERE code IS NOT NULL AND code <> ''";
+    $params = [];
+
+    if ($excludedId !== null) {
+        $sql .= " AND id<>?";
+        $params[] = (int)$excludedId;
+    }
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
+    $nextNumber = 1;
+
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $existingCode) {
+        if (preg_match('/^MAG(\d+)$/i', trim($existingCode), $matches)) {
+            $nextNumber = max($nextNumber, (int)$matches[1] + 1);
+        }
+    }
+
+    do {
+        $code = 'MAG'.str_pad((string)$nextNumber, 3, '0', STR_PAD_LEFT);
+        $check = $pdo->prepare("SELECT id FROM magasins WHERE code=? LIMIT 1");
+        $check->execute([$code]);
+        $nextNumber++;
+    } while ($check->fetch());
+
+    return $code;
+}
+
 function historique(
     $pdo,
     $userId,
@@ -97,6 +128,10 @@ if (
     $code =
         trim($_POST['code']);
 
+    if ($code === '') {
+        $code = generateMagasinCode($pdo);
+    }
+
     $telephone =
         trim($_POST['telephone_magasin']);
 
@@ -127,18 +162,16 @@ if (
     }
 
     /* CHECK CODE */
-    if(!empty($code)){
+    $check =
+        $pdo->prepare("
+            SELECT id
+            FROM magasins
+            WHERE code=?
+        ");
 
-        $check =
-            $pdo->prepare("
-                SELECT id
-                FROM magasins
-                WHERE code=?
-            ");
+    $check->execute([$code]);
 
-        $check->execute([$code]);
-
-        if($check->fetch()){
+    if($check->fetch()){
 
             flash(
                 'error',
@@ -147,7 +180,6 @@ if (
 
             header("Location: settings.php");
             exit;
-        }
     }
 
     $stmt =
@@ -228,6 +260,10 @@ if (
 
     $code =
         trim($_POST['code']);
+
+    if ($code === '') {
+        $code = generateMagasinCode($pdo, $id);
+    }
 
     $telephone =
         trim($_POST['telephone_magasin']);
@@ -549,6 +585,8 @@ $magasins =
         ORDER BY id DESC
     ")->fetchAll();
 
+$nextMagasinCode = generateMagasinCode($pdo);
+
 /* =========================
    STATS
 ========================= */
@@ -766,7 +804,7 @@ include 'includes/sidebar.php';
 <input
     type="text"
     name="nom"
-    placeholder="Nom magasin"
+    placeholder="Ex. : Magasin Centre-ville"
     required
     class="border p-4 rounded-2xl"
 >
@@ -774,35 +812,35 @@ include 'includes/sidebar.php';
 <input
     type="text"
     name="code"
-    placeholder="Code"
+    placeholder="Vide = <?= e($nextMagasinCode) ?> automatique"
     class="border p-4 rounded-2xl"
 >
 
 <input
     type="text"
     name="telephone_magasin"
-    placeholder="Téléphone"
+    placeholder="Ex. : +257 79 00 00 00"
     class="border p-4 rounded-2xl"
 >
 
 <input
     type="email"
     name="email"
-    placeholder="Email"
+    placeholder="Ex. : magasin@entreprise.bi"
     class="border p-4 rounded-2xl"
 >
 
 <input
     type="text"
     name="ville"
-    placeholder="Ville"
+    placeholder="Ex. : Bujumbura"
     class="border p-4 rounded-2xl"
 >
 
 <input
     type="text"
     name="pays_magasin"
-    placeholder="Pays"
+    placeholder="Ex. : Burundi"
     class="border p-4 rounded-2xl"
 >
 
@@ -811,7 +849,7 @@ include 'includes/sidebar.php';
 <textarea
     name="adresse_magasin"
     rows="3"
-    placeholder="Adresse"
+    placeholder="Ex. : Avenue de la Paix, numéro 10"
     class="w-full border p-4 rounded-2xl mt-5"
 ></textarea>
 
@@ -980,6 +1018,7 @@ include 'includes/sidebar.php';
     type="text"
     name="nom"
     value="<?= e($m['nom'] ?? '') ?>"
+    placeholder="Ex. : Nom du magasin"
     class="border p-3 rounded-xl"
 >
 
@@ -987,6 +1026,7 @@ include 'includes/sidebar.php';
     type="text"
     name="code"
     value="<?= e($m['code'] ?? '') ?>"
+    placeholder="Vide = nouveau code automatique"
     class="border p-3 rounded-xl"
 >
 
@@ -994,6 +1034,7 @@ include 'includes/sidebar.php';
     type="text"
     name="telephone_magasin"
     value="<?= e($m['telephone'] ?? '') ?>"
+    placeholder="Ex. : +257 79 00 00 00"
     class="border p-3 rounded-xl"
 >
 
@@ -1001,6 +1042,7 @@ include 'includes/sidebar.php';
     type="email"
     name="email"
     value="<?= e($m['email'] ?? '') ?>"
+    placeholder="Ex. : magasin@entreprise.bi"
     class="border p-3 rounded-xl"
 >
 
@@ -1008,6 +1050,7 @@ include 'includes/sidebar.php';
     type="text"
     name="ville"
     value="<?= e($m['ville'] ?? '') ?>"
+    placeholder="Ex. : Bujumbura"
     class="border p-3 rounded-xl"
 >
 
@@ -1015,6 +1058,7 @@ include 'includes/sidebar.php';
     type="text"
     name="pays_magasin"
     value="<?= e($m['pays'] ?? '') ?>"
+    placeholder="Ex. : Burundi"
     class="border p-3 rounded-xl"
 >
 
@@ -1023,6 +1067,7 @@ include 'includes/sidebar.php';
 <textarea
     name="adresse_magasin"
     rows="3"
+    placeholder="Ex. : Avenue de la Paix, numéro 10"
     class="w-full border p-3 rounded-xl mt-4"
 ><?= e($m['adresse'] ?? '') ?></textarea>
 
