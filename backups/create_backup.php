@@ -256,7 +256,8 @@ Création Backup
 
 <link
 rel="stylesheet"
-href="../assets/vendor/fontawesome.min.css"
+href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+onerror="this.onerror=null;this.href='../assets/vendor/fontawesome.min.css';"
 />
 
 <script>

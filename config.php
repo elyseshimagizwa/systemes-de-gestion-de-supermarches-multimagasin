@@ -62,7 +62,7 @@ header("Referrer-Policy: strict-origin-when-cross-origin");
 
 header("Permissions-Policy: geolocation=(), microphone=(), camera=()");
 
-header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;");
+header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob:; font-src 'self' data: https://cdnjs.cloudflare.com;");
 
 /*
 |--------------------------------------------------------------------------

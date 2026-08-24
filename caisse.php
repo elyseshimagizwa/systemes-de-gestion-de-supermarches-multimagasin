@@ -701,7 +701,8 @@ if (
             nom,
             prix_vente,
             quantite,
-            codebarre
+            codebarre,
+            photos
         FROM produits
         WHERE quantite > 0
         AND magasin_id=?
@@ -1001,7 +1002,7 @@ body{
 .product-card{
     background:white;
     border-radius:22px;
-    padding:18px;
+    padding:12px;
     transition:.2s;
     border:1px solid #e5e7eb;
 }
@@ -1015,6 +1016,21 @@ body{
 .product-price{
     color:#16a34a;
     font-weight:bold;
+}
+
+.product-image{
+    width:100%;
+    height:150px;
+    object-fit:cover;
+    border-radius:16px;
+    background:#f3f4f6;
+}
+
+.product-image-placeholder{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:2.5rem;
 }
 
 .cart-item{
@@ -1526,6 +1542,24 @@ let cart = [];
 let produits = [];
 let currentPage = 1;
 let loadingProducts = false;
+
+function productImage(product){
+
+    let photos = [];
+
+    try {
+        photos = Array.isArray(product.photos)
+            ? product.photos
+            : JSON.parse(product.photos || '[]');
+    } catch (error) {
+        photos = [];
+    }
+
+    return Array.isArray(photos) && photos.length > 0
+        ? photos[0]
+        : '';
+}
+
 /*Ajouter le Lazy Loading*/
 async function loadProducts(){
 
@@ -1550,6 +1584,8 @@ async function loadProducts(){
 
     data.forEach(p=>{
 
+        const image = productImage(p);
+
         html += `
         <button
             type="button"
@@ -1558,7 +1594,11 @@ async function loadProducts(){
             class="product-card text-left"
         >
 
-            <div class="text-lg font-bold text-slate-800">
+            ${image
+                ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(p.nom)}" class="product-image" loading="lazy" decoding="async">`
+                : `<div class="product-image product-image-placeholder">📦</div>`}
+
+            <div class="mt-3 text-lg font-bold text-slate-800">
 
                 ${p.nom}
 
@@ -1682,7 +1722,8 @@ function addItem(p){
             prix_vente:parseFloat(p.prix_vente),
             quantite:parseInt(p.quantite),
             qty:1,
-            codebarre:p.codebarre
+            codebarre:p.codebarre,
+            image:productImage(p)
         });
     }
 
@@ -1839,6 +1880,14 @@ function render(){
         <div class="cart-item">
 
             <div class="flex justify-between gap-3">
+
+                <div class="w-16 h-16 flex-shrink-0">
+
+                    ${i.image
+                        ? `<img src="${escapeHtml(i.image)}" alt="${escapeHtml(i.nom)}" class="w-16 h-16 object-cover rounded-xl" loading="lazy">`
+                        : `<div class="w-16 h-16 rounded-xl bg-gray-200 flex items-center justify-center text-2xl">📦</div>`}
+
+                </div>
 
                 <div class="flex-1">
 

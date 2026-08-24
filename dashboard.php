@@ -287,6 +287,39 @@ $response['online'] =
             $profit =
                 $stmtProfit->fetchColumn();
 
+            /* BENEFICE DE LA SEMAINE */
+
+            $sqlWeeklyProfit = "
+                SELECT COALESCE(
+                    SUM(
+                        lv.sous_total -
+                        (p.prix_achat * lv.quantite)
+                    ),0
+                )
+                FROM ligne_ventes lv
+                JOIN produits p ON p.id = lv.produit_id
+                JOIN ventes v ON v.id = lv.vente_id
+                WHERE YEARWEEK(v.date_vente, 1) = YEARWEEK(CURDATE(), 1)
+                $whereVente
+            ";
+
+            $stmtWeeklyProfit = $pdo->prepare($sqlWeeklyProfit);
+            $stmtWeeklyProfit->execute($paramsVente);
+            $weeklyProfit = $stmtWeeklyProfit->fetchColumn();
+
+            /* VALEUR DES PRODUITS EN STOCK */
+
+            $sqlStockValue = "
+                SELECT COALESCE(SUM(p.prix_vente * p.quantite), 0)
+                FROM produits p
+                WHERE p.quantite > 0
+                $whereProduit
+            ";
+
+            $stmtStockValue = $pdo->prepare($sqlStockValue);
+            $stmtStockValue->execute($paramsProduit);
+            $stockValue = $stmtStockValue->fetchColumn();
+
             /* STOCK */
 
             $sqlStock = "
@@ -329,6 +362,12 @@ $response['online'] =
 
             $response["profit"] =
                 number_format($profit,2);
+
+            $response["profit_semaine"] =
+                number_format($weeklyProfit, 2);
+
+            $response["valeur_stock"] =
+                number_format($stockValue, 2);
 
             $response["stock"] =
                 $stockLow;
@@ -996,6 +1035,36 @@ include 'includes/sidebar.php';
 
         </div>
 
+        <div class="dashboard-card dashboard-green">
+
+            <div class="dashboard-title">
+                📅 Bénéfice semaine
+            </div>
+
+            <div
+                id="kpiWeeklyProfit"
+                class="dashboard-number"
+            >
+                0
+            </div>
+
+        </div>
+
+        <div class="dashboard-card dashboard-cyan">
+
+            <div class="dashboard-title">
+                💼 Valeur du stock
+            </div>
+
+            <div
+                id="kpiStockValue"
+                class="dashboard-number"
+            >
+                0
+            </div>
+
+        </div>
+
         <div class="dashboard-card dashboard-orange">
 
             <div class="dashboard-title">
@@ -1223,6 +1292,16 @@ async function loadKPI(){
     .getElementById("kpiProfit")
     .innerText =
         d.profit + " <?= $devise ?>";
+
+    document
+    .getElementById("kpiWeeklyProfit")
+    .innerText =
+        d.profit_semaine + " <?= $devise ?>";
+
+    document
+    .getElementById("kpiStockValue")
+    .innerText =
+        d.valeur_stock + " <?= $devise ?>";
 
     document
     .getElementById("kpiStock")
@@ -1554,7 +1633,7 @@ if(entry.target.id==="magasinChartBlock"){
 
 loadCompareMagasin();
 
-setInterval(loadCompareMagasin,15000);
+setInterval(loadCompareMagasin,10000);
 
 observer.unobserve(entry.target);
 }

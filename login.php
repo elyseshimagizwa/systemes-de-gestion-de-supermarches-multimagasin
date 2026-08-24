@@ -587,10 +587,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <link rel="stylesheet" href="assets/tailwind.css">
 
-<link
-rel="stylesheet"
-href="assets/vendor/fontawesome.min.css"
-/>
+<?php
+require_once __DIR__ . '/includes/icons.php';
+renderIconAssets('assets/vendor/fontawesome.min.css');
+?>
 
 <style>
 

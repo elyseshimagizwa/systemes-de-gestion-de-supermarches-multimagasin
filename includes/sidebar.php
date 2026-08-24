@@ -54,9 +54,6 @@ function isActivePage($page, $currentPage)
 
 ?>
 
-<link rel="stylesheet"
-href="<?= e($assetBasePath) ?>/vendor/fontawesome.min.css">
-
 <style>
 
 /* =========================================================

@@ -58,7 +58,22 @@ if (!function_exists('currentUser')) {
 
     function currentUser()
     {
-        return $_SESSION['user'] ?? null;
+        $user = $_SESSION['user'] ?? null;
+
+        if (!$user) {
+            return null;
+        }
+
+        $activeMagasinId = (int)($_SESSION['magasin_actif'] ?? 0);
+
+        if (
+            $activeMagasinId > 0
+            && ($user['role'] ?? '') === 'admin'
+        ) {
+            $user['magasin_id'] = $activeMagasinId;
+        }
+
+        return $user;
     }
 }
 
