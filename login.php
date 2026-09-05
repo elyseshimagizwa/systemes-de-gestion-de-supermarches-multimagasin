@@ -8,7 +8,11 @@ require_once 'config.php';
 
 if (isLoggedIn()) {
 
-    header("Location: dashboard.php");
+    header(
+        (currentUser()['role'] ?? '') === 'client'
+        ? 'Location: index.php'
+        : 'Location: dashboard.php'
+    );
     exit;
 }
 
@@ -495,7 +499,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                            REDIRECTION
                         ================================== */
 
-                        header("Location: dashboard.php");
+                        header(
+                            $user['role'] === 'client'
+                            ? "Location: index.php"
+                            : "Location: dashboard.php"
+                        );
                         exit;
 
                     } else {
@@ -871,8 +879,16 @@ body{
 
         </button>
 
+        <a href="index.php" class="text-blue-500 hover:text-blue-700"  style="display: block; text-align: center; margin-top: 10px; border: 1px solid #5039c5; padding: 10px; border-radius: 15px; background-color: rgba(59, 130, 246, 0.7); color: white; text-decoration: none; transition: background-color 0.3s ease, color 0.3s ease;">
+            Retour à l'accueil
+        </a>
+        <p id="returnMessage" style="text-align: center; margin-top: 10px; display: none; color: #5039c5; font-weight: bold;">
+            Retour à l'accueil
+        </p>
+
     </form>
 
+    
     <!-- SECURITY -->
 
     <div class="mt-6 text-center text-slate-400 text-xs leading-relaxed">
@@ -931,6 +947,22 @@ function togglePassword(){
         );
     }
 }
+
+var returnLink = document.querySelector('a[href="index.php"]');
+var returnMessage = document.getElementById('returnMessage');
+returnLink.addEventListener('click', function(event) {
+    event.preventDefault();
+    returnLink.style.display = 'none';
+    returnMessage.style.display = 'block';
+    setTimeout(function() {
+        window.location.href = 'index.php';
+    }, 2000);
+});
+
+returnLink.addEventListener('click', function(event) {
+    event.preventDefault();
+    returnMessage.style.display = 'flex';
+});
 
 </script>
 

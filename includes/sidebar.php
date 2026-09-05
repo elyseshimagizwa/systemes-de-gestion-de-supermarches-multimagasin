@@ -609,6 +609,16 @@ function isActivePage($page, $currentPage)
                 Commandes
             </a>
 
+            <?php if($isAdmin): ?>
+            <a
+                href="commandes_clients.php"
+                class="sidebar-link <?= isActivePage('commandes_clients.php',$currentPage) ?>"
+            >
+                <i class="fa fa-globe text-lime-400"></i>
+                Commandes web
+            </a>
+            <?php endif; ?>
+
             <a
                 href="sessions_caisse.php"
                 class="sidebar-link <?= isActivePage('sessions_caisse.php',$currentPage) ?>"

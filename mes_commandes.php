@@ -1,0 +1,14 @@
+<?php
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/includes/icons.php';
+requireLogin();
+$user = currentUser();
+if (($user['role'] ?? '') !== 'client') { header('Location: dashboard.php'); exit; }
+$orders = [];
+try {
+    $stmt = $pdo->prepare('SELECT cc.*, m.nom AS magasin_nom, m.adresse, m.ville FROM commandes_clients cc JOIN magasins m ON m.id=cc.magasin_id WHERE cc.utilisateur_id=? ORDER BY cc.date_commande DESC');
+    $stmt->execute([(int)$user['id']]);
+    $orders = $stmt->fetchAll();
+} catch (Throwable $exception) {}
+$lines = $pdo->prepare('SELECT nom_produit, quantite, prix_unitaire, sous_total FROM lignes_commandes_clients WHERE commande_id=? ORDER BY id');
+?><!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mes commandes</title><link rel="stylesheet" href="assets/tailwind.css"><?php renderIconAssets('assets/vendor/fontawesome.min.css'); ?></head><body class="min-h-screen bg-[#f6f7f2]"><header class="bg-green-950 px-5 py-5 text-white"><nav class="mx-auto flex max-w-5xl items-center justify-between"><a href="index.php" class="text-2xl font-black">Boutique</a><div class="flex gap-4"><span><?= e($user['nom']) ?></span><a href="logout.php" class="text-lime-300">Déconnexion</a></div></nav></header><main class="mx-auto max-w-5xl px-5 py-10"><div class="mb-8"><h1 class="text-3xl font-black">Mes commandes</h1><p class="mt-2 text-gray-600">Suivez l’état de vos commandes et leur magasin de retrait.</p></div><?php if (!$orders): ?><div class="rounded-2xl bg-white p-8">Vous n’avez encore aucune commande. <a class="font-bold text-green-800" href="index.php">Découvrir les produits</a></div><?php endif; ?><div class="space-y-5"><?php foreach ($orders as $order): $lines->execute([(int)$order['id']]); ?><article class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-black/5"><div class="flex flex-wrap justify-between gap-4"><div><h2 class="text-xl font-black"><?= e($order['numero']) ?></h2><p class="text-sm text-gray-500"><?= e($order['date_commande']) ?></p><p class="mt-2"><i class="fa-solid fa-location-dot mr-1 text-green-700"></i><?= e($order['magasin_nom']) ?><?= $order['ville'] ? ' - '.e($order['ville']) : '' ?></p></div><div class="text-right"><span class="rounded-full bg-lime-100 px-3 py-1 text-sm font-bold text-green-900"><?= e($order['statut']) ?></span><p class="mt-3 text-xl font-black text-green-800"><?= number_format((float)$order['total'], 2, ',', ' ') ?></p></div></div><div class="mt-5 border-t pt-4 text-sm"><?php foreach ($lines->fetchAll() as $line): ?><div class="flex justify-between py-1"><span><?= e($line['nom_produit']) ?> × <?= (int)$line['quantite'] ?></span><span><?= number_format((float)$line['sous_total'], 2, ',', ' ') ?></span></div><?php endforeach; ?></div></article><?php endforeach; ?></div></main></body></html>
