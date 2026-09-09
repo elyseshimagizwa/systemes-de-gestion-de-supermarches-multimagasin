@@ -96,6 +96,13 @@ if (!function_exists('requireLogin')) {
 
 if (!function_exists('requireRole')) {
 
+    function denyClientBackofficeAccess()
+    {
+        http_response_code(403);
+        echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta http-equiv="refresh" content="3;url=index.php"><title>Accès refusé</title></head><body style="font-family:Arial,sans-serif;padding:40px;text-align:center;background:#f6f7f2;color:#17221b"><h1>⛔ Accès refusé</h1><p>Votre compte client ne peut pas accéder à cet espace.</p><p>Redirection vers la boutique dans 3 secondes...</p><a href="index.php">Retour immédiat à la boutique</a><script>setTimeout(function(){ window.location.replace("index.php"); }, 3000);</script></body></html>';
+        exit;
+    }
+
     function requireRole($roles)
     {
         requireLogin();
@@ -108,6 +115,10 @@ if (!function_exists('requireRole')) {
                 (array)$roles
             )
         ) {
+
+            if (($user['role'] ?? '') === 'client') {
+                denyClientBackofficeAccess();
+            }
 
             header("Location: dashboard.php");
 
@@ -173,20 +184,67 @@ if (!function_exists('canAccessMagasin')) {
 
 if (!function_exists('currentOpenCaisseId')) {
 
+    function currentCaisseId($magasinId = null)
+    {
+        global $pdo;
+
+        $magasinId = $magasinId ?? currentMagasinId();
+        $selectedId = (int)($_SESSION['caisse_active'] ?? 0);
+
+        if ((int)$magasinId <= 0) {
+            return null;
+        }
+
+        if ($selectedId > 0) {
+            $stmt = $pdo->prepare("SELECT id FROM caisses WHERE id=? AND magasin_id=? AND statut='active' LIMIT 1");
+            $stmt->execute([$selectedId, (int)$magasinId]);
+
+            if ($stmt->fetchColumn()) {
+                return $selectedId;
+            }
+        }
+
+        $stmt = $pdo->prepare("SELECT id FROM caisses WHERE magasin_id=? AND statut='active' ORDER BY id ASC LIMIT 1");
+        $stmt->execute([(int)$magasinId]);
+        $id = $stmt->fetchColumn();
+
+        if ($id === false) {
+            return null;
+        }
+
+        $_SESSION['caisse_active'] = (int)$id;
+        return (int)$id;
+    }
+
+    function setCaisseActive($caisseId, $magasinId = null)
+    {
+        global $pdo;
+
+        $magasinId = $magasinId ?? currentMagasinId();
+        $stmt = $pdo->prepare("SELECT id FROM caisses WHERE id=? AND magasin_id=? AND statut='active' LIMIT 1");
+        $stmt->execute([(int)$caisseId, (int)$magasinId]);
+
+        if (!$stmt->fetchColumn()) {
+            return false;
+        }
+
+        $_SESSION['caisse_active'] = (int)$caisseId;
+        return true;
+    }
+
     function currentOpenCaisseId($utilisateurId = null, $magasinId = null)
     {
         global $pdo;
 
-        $user = currentUser();
-        $utilisateurId = $utilisateurId ?? ($user['id'] ?? 0);
         $magasinId = $magasinId ?? currentMagasinId();
+        $caisseId = currentCaisseId($magasinId);
 
-        if ((int)$utilisateurId <= 0 || (int)$magasinId <= 0) {
+        if ((int)$caisseId <= 0 || (int)$magasinId <= 0) {
             return null;
         }
 
-        $stmt = $pdo->prepare("SELECT id FROM sessions_caisse WHERE utilisateur_id=? AND magasin_id=? AND statut='ouverte' LIMIT 1");
-        $stmt->execute([(int)$utilisateurId, (int)$magasinId]);
+        $stmt = $pdo->prepare("SELECT id FROM sessions_caisse WHERE caisse_id=? AND magasin_id=? AND statut='ouverte' LIMIT 1");
+        $stmt->execute([(int)$caisseId, (int)$magasinId]);
 
         $id = $stmt->fetchColumn();
         return $id === false ? null : (int)$id;

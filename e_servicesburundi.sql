@@ -2913,7 +2913,20 @@ CREATE TABLE `commandes` (
   `magasin_id` int(11) DEFAULT NULL,
   `utilisateur_id` int(11) DEFAULT NULL,
   `statut` enum('En attente','Reçue partiellement','Reçue totalement') DEFAULT 'En attente',
-  `date_commande` timestamp NOT NULL DEFAULT current_timestamp()
+  `date_commande` timestamp NOT NULL DEFAULT current_timestamp(),
+  `email_envoye` datetime DEFAULT NULL,
+  `email_erreur` text DEFAULT NULL,
+  `email_tentatives` int(11) NOT NULL DEFAULT 0,
+  `prochaine_relance` datetime DEFAULT NULL,
+  `portail_token` char(64) DEFAULT NULL,
+  `fournisseur_statut` enum('En attente','Acceptée','Refusée','Expédiée','Livrée') NOT NULL DEFAULT 'En attente',
+  `date_confirmation_fournisseur` datetime DEFAULT NULL,
+  `date_expedition` datetime DEFAULT NULL,
+  `date_livraison_prevue` date DEFAULT NULL,
+  `date_livraison` datetime DEFAULT NULL,
+  `fournisseur_commentaire` text DEFAULT NULL
+  `email_envoye` datetime DEFAULT NULL,
+  `email_erreur` text DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -2925,7 +2938,7 @@ CREATE TABLE `commandes` (
 CREATE TABLE `connexions_utilisateurs` (
   `id` int(11) NOT NULL,
   `utilisateur_id` int(11) NOT NULL,
-  `magasin_id` int(11) NOT NULL,
+  `magasin_id` int(11) DEFAULT NULL,
   `session_id` varchar(255) DEFAULT NULL,
   `ip` varchar(255) DEFAULT NULL,
   `user_agent` text DEFAULT NULL,
@@ -3224,6 +3237,22 @@ CREATE TABLE `produits` (
   `categorie_id` int(11) DEFAULT NULL,
   `photos` longtext DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `alertes_stock_fournisseurs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `produit_id` int(11) NOT NULL,
+  `magasin_id` int(11) NOT NULL,
+  `fournisseur_id` int(11) DEFAULT NULL,
+  `dernier_envoi` datetime DEFAULT NULL,
+  `tentatives` int(11) NOT NULL DEFAULT 0,
+  `derniere_erreur` text DEFAULT NULL,
+  `resolue` tinyint(1) NOT NULL DEFAULT 0,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_alerte_stock_produit_magasin` (`produit_id`,`magasin_id`),
+  KEY `idx_alerte_stock_pending` (`resolue`,`dernier_envoi`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --

@@ -11,10 +11,14 @@ if (isLoggedIn()) {
 }
 
 $error = null;
+$settings = getSettings();
+register_shutdown_function(static function (): void {
+    include __DIR__ . '/includes/footer.php';
+});
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf();
     $nom = trim((string)($_POST['nom'] ?? ''));
-    $email = trim((string)($_POST['email'] ?? ''));
+    $email = strtolower(trim((string)($_POST['email'] ?? '')));
     $password = (string)($_POST['password'] ?? '');
     $confirmation = (string)($_POST['confirmation'] ?? '');
 
@@ -43,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         session_regenerate_id(true);
         $_SESSION['user'] = ['id' => $userId, 'nom' => $nom, 'email' => $email, 'role' => 'client', 'magasin_id' => null, 'multi_magasin' => 0];
         $_SESSION['last_activity'] = time();
-        header('Location: index.php');
+        header('Location: mes_commandes.php');
         exit;
     } catch (Throwable $exception) {
         $error = $exception->getMessage();

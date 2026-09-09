@@ -21,6 +21,10 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 
 $user = currentUser();
 
+if (($user['role'] ?? '') === 'client') {
+    denyClientBackofficeAccess();
+}
+
 $isAdmin =
     ($user['role'] ?? '') === 'admin';
 
@@ -116,14 +120,14 @@ if (!$magasin) {
 $stmt = $pdo->prepare("
     SELECT id
 FROM sessions_caisse
-WHERE utilisateur_id=?
+WHERE caisse_id=?
 AND magasin_id=?
 AND statut='ouverte'
 LIMIT 1
 ");
 
 $stmt->execute([
-    (int)$user['id'],
+    (int)(currentCaisseId($magasin_id) ?? 0),
     $magasin_id
 ]);
 
@@ -383,6 +387,7 @@ if (
             (
                 utilisateur_id,
                 magasin_id,
+                caisse_id,
                 session_caisse_id,
                 total,
                 montant_recu,
@@ -393,6 +398,7 @@ if (
             )
             VALUES
             (
+                ?,
                 ?,
                 ?,
                 ?,
@@ -415,6 +421,7 @@ if (
             secureInt($user['id']),
 
             $magasin_id,
+            (int)(currentCaisseId($magasin_id) ?? 0),
             $session['id'],
 
             $totalTTC,
@@ -567,6 +574,7 @@ if (
                 (
                     utilisateur_id,
                     magasin_id,
+                    caisse_id,
                     action,
                     details,
                     ip,
@@ -575,6 +583,7 @@ if (
                 )
                 VALUES
                 (
+                    ?,
                     ?,
                     ?,
                     ?,
@@ -590,6 +599,8 @@ if (
             secureInt($user['id']),
 
             $magasin_id,
+
+            (int)(currentCaisseId($magasin_id) ?? 0),
 
             'VENTE',
 
@@ -835,14 +846,14 @@ $venteMoyenneAffiche =
 $sessionStats = $pdo->prepare("
     SELECT *
     FROM sessions_caisse
-    WHERE utilisateur_id=?
+    WHERE caisse_id=?
     AND magasin_id=?
     AND statut='ouverte'
     LIMIT 1
 ");
 
 $sessionStats->execute([
-    $user['id'],
+    (int)(currentCaisseId($magasin_id) ?? 0),
     $magasin_id
 ]);
 

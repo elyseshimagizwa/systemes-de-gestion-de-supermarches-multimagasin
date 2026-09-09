@@ -19,11 +19,12 @@ $allowedRoles = [
 
 if (!in_array($role, $allowedRoles)) {
 
-    die("
-        <div style='padding:30px;font-family:Arial;color:red'>
-            ⛔ Accès refusé
-        </div>
-    ");
+    if ($role === 'client') {
+        denyClientBackofficeAccess();
+    }
+
+    http_response_code(403);
+    exit("<div style='padding:30px;font-family:Arial;color:red'>⛔ Accès refusé</div>");
 }
 
 $isAdmin =

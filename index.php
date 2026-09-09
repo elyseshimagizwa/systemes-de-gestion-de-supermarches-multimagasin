@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/includes/icons.php';
+require_once __DIR__ . '/includes/client-orders.php';
 
 $errors = [];
 $success = null;
@@ -18,6 +19,7 @@ if (!isset($_SESSION['client_cart']) || !is_array($_SESSION['client_cart'])) {
 }
 
 $clientUser = currentUser();
+$settings = getSettings();
 $isClientLoggedIn = ($clientUser['role'] ?? '') === 'client';
 if ($isClientLoggedIn) {
     $old = ['nom' => $clientUser['nom'], 'email' => $clientUser['email']];
@@ -35,6 +37,7 @@ try {
         magasin_id int NOT NULL,
         total decimal(12,2) NOT NULL DEFAULT 0.00,
         statut varchar(30) NOT NULL DEFAULT 'En attente',
+        mode_paiement varchar(40) NOT NULL DEFAULT 'Paiement au retrait',
         date_commande timestamp NOT NULL DEFAULT current_timestamp(),
         KEY idx_client_orders_user (utilisateur_id),
         KEY idx_client_orders_store (magasin_id)
@@ -49,6 +52,10 @@ try {
         sous_total decimal(12,2) NOT NULL,
         KEY idx_client_order_lines_order (commande_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+        $paymentColumn = $pdo->query("SHOW COLUMNS FROM commandes_clients LIKE 'mode_paiement'")->fetch();
+        if (!$paymentColumn) {
+            $pdo->exec("ALTER TABLE commandes_clients ADD COLUMN mode_paiement varchar(40) NOT NULL DEFAULT 'Paiement au retrait' AFTER statut");
+        }
 } catch (Throwable $exception) {
     $errors[] = 'Le catalogue client ne peut pas initialiser sa structure de commandes.';
 }
@@ -57,9 +64,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     verify_csrf();
 
     $old['nom'] = $isClientLoggedIn ? $clientUser['nom'] : trim((string)($_POST['nom'] ?? ''));
-    $old['email'] = $isClientLoggedIn ? $clientUser['email'] : trim((string)($_POST['email'] ?? ''));
+    $old['email'] = $isClientLoggedIn ? $clientUser['email'] : strtolower(trim((string)($_POST['email'] ?? '')));
     $password = (string)($_POST['password'] ?? '');
     $magasinId = (int)($_POST['magasin_id'] ?? 0);
+    $paymentMethod = trim((string)($_POST['mode_paiement'] ?? ''));
+    $allowedPaymentMethods = ['Paiement à la caisse', 'Paiement au retrait'];
     $postedCart = json_decode((string)($_POST['cart'] ?? '{}'), true);
     if (is_array($postedCart)) {
         $_SESSION['client_cart'] = [];
@@ -82,6 +91,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     }
     if (!$cart) {
         $errors[] = 'Votre panier est vide.';
+    }
+    if (!in_array($paymentMethod, $allowedPaymentMethods, true)) {
+        $errors[] = 'Veuillez choisir un moyen de paiement disponible.';
     }
 
     $storeStmt = $pdo->prepare("SELECT id, nom, adresse, ville FROM magasins WHERE id=? AND statut='actif' LIMIT 1");
@@ -136,19 +148,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                 $userId = (int)$pdo->lastInsertId();
             }
             $number = 'WEB-' . date('YmdHis') . '-' . random_int(1000, 9999);
+            $pickupCode = 'RET-' . strtoupper(bin2hex(random_bytes(3)));
 
-            $orderStmt = $pdo->prepare("INSERT INTO commandes_clients (numero, utilisateur_id, magasin_id, total, statut) VALUES (?, ?, ?, ?, 'En attente')");
-            $orderStmt->execute([$number, $userId, $magasinId, $total]);
+            $orderStmt = $pdo->prepare("INSERT INTO commandes_clients (numero, code_retrait, utilisateur_id, magasin_id, total, statut, mode_paiement) VALUES (?, ?, ?, ?, ?, 'En attente', ?)");
+            $orderStmt->execute([$number, $pickupCode, $userId, $magasinId, $total, $paymentMethod]);
             $orderId = (int)$pdo->lastInsertId();
+
+            $pdo->prepare('INSERT INTO historique_commandes_clients (commande_id, nouveau_statut, utilisateur_id, commentaire) VALUES (?, ?, ?, ?)')->execute([$orderId, 'En attente', $userId, 'Commande créée en ligne']);
+            createClientNotification($pdo, $userId, $orderId, 'Commande reçue', 'Votre commande ' . $number . ' a été enregistrée.');
 
             $lineStmt = $pdo->prepare('INSERT INTO lignes_commandes_clients (commande_id, produit_id, nom_produit, quantite, prix_unitaire, sous_total) VALUES (?, ?, ?, ?, ?, ?)');
             $stockStmt = $pdo->prepare('UPDATE produits SET quantite=quantite-? WHERE id=? AND magasin_id=?');
+            $stockHistoryStmt = $pdo->prepare("INSERT INTO stock_mouvements (magasin_id, produit_id, type, quantite, ancien_stock, nouveau_stock, motif, utilisateur_id, date_mouvement) VALUES (?, ?, 'sortie', ?, ?, ?, ?, ?, NOW())");
             foreach ($lines as [$productId, $name, $quantity, $price, $subtotal]) {
                 $lineStmt->execute([$orderId, $productId, $name, $quantity, $price, $subtotal]);
+                $oldStock = (int)$products[$productId]['quantite'];
                 $stockStmt->execute([$quantity, $productId, $magasinId]);
+                if ($stockStmt->rowCount() !== 1) {
+                    throw new RuntimeException('Le stock du magasin de retrait n\'a pas pu être mis à jour.');
+                }
+                $stockHistoryStmt->execute([
+                    $magasinId,
+                    $productId,
+                    $quantity,
+                    $oldStock,
+                    $oldStock - $quantity,
+                    'Commande client en ligne - magasin de retrait',
+                    $userId
+                ]);
             }
 
             $pdo->commit();
+            sendClientOrderEmail(['numero' => $number, 'code_retrait' => $pickupCode, 'client_email' => $old['email'], 'client_nom' => $old['nom']], 'En attente', getSettings());
             $_SESSION['client_cart'] = [];
             $success = ['number' => $number, 'total' => $total, 'store' => $store['nom']];
             $old = ['nom' => '', 'email' => ''];
@@ -200,10 +231,11 @@ function clientPhoto(array $product): string
     <style>
         body{background:#f6f7f2;color:#17221b}.hero{background:linear-gradient(120deg,#123b2a,#27704d 58%,#d4e65c);color:white}.product-image{height:220px;object-fit:cover}.product-placeholder{height:220px;background:#e5eadf}.cart-panel{max-height:calc(100vh - 2rem);overflow:auto;top:1rem;right:1rem;width:min(380px,calc(100vw - 2rem))}.cart-line{border:1px solid #e5e7eb}.cart-quantity button{height:2rem;width:2rem;border-radius:.6rem;background:#e7f1e8;font-weight:900;color:#14532d}.cart-quantity button:hover{background:#cde5d1}
     </style>
+<style>#cart-panel{display:none}.cart-panel.is-open{display:block}</style>
 </head>
 <body>
 <header class="hero">
-    <nav class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-5"><a href="index.php" class="text-2xl font-black">Boutique</a><div class="flex flex-wrap items-center gap-4 text-sm font-bold"><a href="#fonctionnalites">Fonctionnalités</a><a href="#services">Services</a><a href="#faq">FAQ</a><?php if ($isClientLoggedIn): ?><a href="mes_commandes.php">Mes commandes</a><a href="logout.php">Déconnexion</a><?php else: ?><a href="inscription_client.php">Inscription</a><a href="login.php">Login</a><?php endif; ?><button type="button" onclick="toggleCart()" class="rounded-full bg-white px-5 py-3 font-bold text-green-950"><i class="fa-solid fa-bag-shopping mr-2"></i>Panier (<span id="cart-count"><?= $cartCount ?></span>)</button></div></nav>
+    <nav class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-5"><a href="index.php" class="flex items-center gap-3 text-2xl font-black"><?php if (!empty($settings['logo'])): ?><img src="<?= e($settings['logo']) ?>" alt="<?= e($settings['nom_boutique'] ?? 'Boutique') ?>" class="h-12 w-12 rounded-xl object-cover"><?php endif; ?><span><?= e($settings['nom_boutique'] ?? 'Boutique') ?></span></a><div class="flex flex-wrap items-center gap-4 text-sm font-bold"><a href="#fonctionnalites">Fonctionnalités</a><a href="#services">Services</a><a href="#faq">FAQ</a><?php if ($isClientLoggedIn): ?><a href="mes_commandes.php">Mes commandes</a><a href="logout.php">Déconnexion</a><?php else: ?><a href="inscription_client.php">Inscription</a><a href="login.php">Login</a><?php endif; ?><button type="button" onclick="toggleCart()" class="rounded-full bg-white px-5 py-3 font-bold text-green-950"><i class="fa-solid fa-bag-shopping mr-2"></i>Panier (<span id="cart-count"><?= $cartCount ?></span>)</button></div></nav>
     <div class="mx-auto max-w-7xl px-5 pb-16 pt-10"><p class="mb-3 font-bold uppercase tracking-widest text-lime-200">Disponible près de chez vous</p><h1 class="max-w-3xl text-4xl font-black md:text-6xl">Les produits que vous aimez, simplement.</h1><p class="mt-5 max-w-xl text-lg text-green-50">Découvrez les produits les plus vendus et choisissez votre magasin de retrait.</p></div>
 </header>
 <main class="mx-auto max-w-7xl px-5 py-10">
@@ -242,9 +274,39 @@ try {
 function saveCart(){ document.getElementById('cart-input').value = JSON.stringify(cart); localStorage.setItem('client_cart', JSON.stringify(cart)); }
 function addToCart(id){ cart[id] = Math.min((cart[id] || 0) + 1, Number(products[id].quantite)); renderCart(); toggleCart(true); }
 function changeQty(id, amount){ cart[id] = Math.max(0, Math.min((cart[id] || 0) + amount, Number(products[id].quantite))); if (!cart[id]) delete cart[id]; renderCart(); }
-function toggleCart(force){ const panel=document.getElementById('cart-panel'), overlay=document.getElementById('cart-overlay'); const open=force === true ? true : panel.classList.contains('hidden'); panel.classList.toggle('hidden', !open); overlay.classList.toggle('hidden', !open); }
+function toggleCart(force){ const panel=document.getElementById('cart-panel'), overlay=document.getElementById('cart-overlay'); const open=force === true ? true : !panel.classList.contains('is-open'); panel.classList.toggle('is-open', open); panel.classList.toggle('hidden', !open); overlay.classList.toggle('hidden', !open); }
 function renderCart(){ let total=0,count=0,html=''; Object.entries(cart).forEach(([id,qty])=>{const p=products[id]; if(!p)return; const line=Number(p.prix_vente)*qty; total+=line;count+=qty;html+=`<div class="cart-line rounded-xl bg-gray-50 p-3"><div class="flex items-start justify-between gap-3"><strong>${escapeHtml(p.nom)}</strong><button type="button" onclick="changeQty(${id},-${qty})" class="text-red-600" aria-label="Supprimer"><i class="fa-solid fa-trash"></i></button></div><div class="mt-3 flex items-center justify-between"><span class="text-sm text-gray-500">${Number(p.prix_vente).toFixed(2)} × ${qty}</span><span class="cart-quantity flex gap-2"><button type="button" onclick="changeQty(${id},-1)" aria-label="Diminuer">−</button><span class="flex min-w-8 items-center justify-center font-bold">${qty}</span><button type="button" onclick="changeQty(${id},1)" aria-label="Augmenter">+</button></span></div></div>`}); document.getElementById('cart-lines').innerHTML=html || '<p class="rounded-xl bg-gray-50 p-4 text-gray-500">Votre panier est vide.</p>';document.getElementById('cart-total').textContent=total.toFixed(2);document.getElementById('cart-count').textContent=count;saveCart();}
 function escapeHtml(value){const div=document.createElement('div');div.textContent=value;return div.innerHTML;} renderCart();
 </script>
+<script>
+const orderForm = document.querySelector('#cart-panel form[method="post"]');
+const orderButton = orderForm ? orderForm.querySelector('button') : null;
+if (orderForm && orderButton) {
+    const paymentBox = document.createElement('fieldset');
+    paymentBox.className = 'space-y-3 rounded-xl border border-green-100 bg-green-50 p-4';
+    paymentBox.innerHTML = '<legend class="px-1 text-sm font-bold text-green-950">Moyen de paiement</legend>'
+        + '<label class="flex cursor-pointer gap-3 rounded-xl bg-white p-3 ring-1 ring-green-100"><input type="radio" name="payment_choice" value="Paiement à la caisse" class="mt-1" required><span><strong class="block text-sm">Paiement à la caisse directement</strong><small class="text-gray-600">Réglez votre commande à la caisse du magasin choisi.</small></span></label>'
+        + '<label class="flex cursor-pointer gap-3 rounded-xl bg-white p-3 ring-1 ring-green-100"><input type="radio" name="payment_choice" value="Paiement au retrait" class="mt-1"><span><strong class="block text-sm">Paiement au retrait de la commande</strong><small class="text-gray-600">Réglez lorsque vous récupérez votre commande dans le magasin choisi.</small></span></label>'
+        + '<div class="hidden" aria-hidden="true"><span>Carte bancaire, Mobile Money et autres moyens de paiement seront proposés ultérieurement.</span><input type="radio" name="payment_choice" value="Carte bancaire"><input type="radio" name="payment_choice" value="Mobile Money"></div>';
+    const paymentInput = document.createElement('input');
+    paymentInput.type = 'hidden';
+    paymentInput.name = 'mode_paiement';
+    orderForm.insertBefore(paymentBox, orderForm.firstChild);
+    orderForm.appendChild(paymentInput);
+    orderButton.disabled = true;
+    orderButton.classList.add('opacity-50', 'cursor-not-allowed');
+    paymentBox.querySelectorAll('input[name="payment_choice"]').forEach((choice) => {
+        choice.addEventListener('change', () => {
+            const available = choice.value === 'Paiement à la caisse' || choice.value === 'Paiement au retrait';
+            paymentInput.value = available ? choice.value : '';
+            orderButton.disabled = !available;
+            orderButton.classList.toggle('opacity-50', !available);
+            orderButton.classList.toggle('cursor-not-allowed', !available);
+            orderButton.classList.toggle('hidden', !available);
+        });
+    });
+}
+</script>
+<?php include __DIR__ . '/includes/footer.php'; ?>
 </body>
 </html>

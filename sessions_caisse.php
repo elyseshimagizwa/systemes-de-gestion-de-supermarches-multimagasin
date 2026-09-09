@@ -35,6 +35,14 @@ if($magasin_id <= 0){
     ");
 }
 
+$caisse_id =
+    (int)(currentCaisseId($magasin_id) ?? 0);
+
+if($caisse_id <= 0){
+
+    exit("<div style='padding:30px'>⛔ Aucune caisse physique active pour ce magasin</div>");
+}
+
 /* =========================================================
    RECHERCHE
 ========================================================= */
@@ -60,6 +68,31 @@ $stmtMagasin->execute([
 $magasin =
     $stmtMagasin->fetch();
 
+$caissesStmt = $pdo->prepare("SELECT id, nom, code FROM caisses WHERE magasin_id=? AND statut='active' ORDER BY nom ASC");
+$caissesStmt->execute([$magasin_id]);
+$caisses = $caissesStmt->fetchAll();
+
+$caisse = null;
+foreach ($caisses as $availableCaisse) {
+    if ((int)$availableCaisse['id'] === $caisse_id) {
+        $caisse = $availableCaisse;
+        break;
+    }
+}
+
+if ($isAdmin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['changer_caisse'])) {
+    verify_csrf();
+
+    if (setCaisseActive((int)$_POST['caisse_id'], $magasin_id)) {
+        flash('success', '✅ Caisse active changée avec succès');
+    } else {
+        flash('error', '⛔ Caisse non autorisée');
+    }
+
+    header('Location:sessions_caisse.php');
+    exit;
+}
+
 /* =========================================================
    DERNIER RESTE
 ========================================================= */
@@ -69,7 +102,7 @@ $dernier_reste = 0;
 $stmtLast = $pdo->prepare("
     SELECT montant_reel
     FROM sessions_caisse
-    WHERE utilisateur_id=?
+    WHERE caisse_id=?
     AND magasin_id=?
     AND statut='fermee'
     ORDER BY id DESC
@@ -77,7 +110,7 @@ $stmtLast = $pdo->prepare("
 ");
 
 $stmtLast->execute([
-    $user['id'],
+    $caisse_id,
     $magasin_id
 ]);
 
@@ -127,14 +160,14 @@ if($isAdmin){
     $stmtOpen = $pdo->prepare("
         SELECT *
         FROM sessions_caisse
-        WHERE utilisateur_id=?
+        WHERE caisse_id=?
         AND magasin_id=?
         AND statut='ouverte'
         LIMIT 1
     ");
 
     $stmtOpen->execute([
-        $user['id'],
+        $caisse_id,
         $magasin_id
     ]);
 
@@ -216,14 +249,14 @@ if(
    $check = $pdo->prepare("
     SELECT id
     FROM sessions_caisse
-    WHERE utilisateur_id=?
+    WHERE caisse_id=?
     AND magasin_id=?
     AND statut='ouverte'
     LIMIT 1
 ");
 
     $check->execute([
-        $user['id'],
+        $caisse_id,
         $magasin_id
     ]);
 
@@ -259,13 +292,6 @@ if(
         (
             utilisateur_id,
             magasin_id,
-
-            montant_initial,
-            reste_veille,
-            solde_depart,
-
-            total_ventes,
-            montant_attendu,
             montant_reel,
             difference_caisse,
 
@@ -276,6 +302,7 @@ if(
         )
         VALUES
         (
+            ?,
             ?,
             ?,
 
@@ -298,6 +325,7 @@ if(
     $insert->execute([
         $user['id'],
         $magasin_id,
+        $caisse_id,
 
         $montant_initial,
         $reste_veille,
@@ -351,6 +379,7 @@ if(
         FROM sessions_caisse
         WHERE id=?
         AND magasin_id=?
+        AND caisse_id=?
         AND statut='ouverte'
         LIMIT 1
         FOR UPDATE
@@ -358,7 +387,8 @@ if(
 
     $stmt->execute([
         $session_id,
-        $magasin_id
+        $magasin_id,
+        $caisse_id
     ]);
 
     $session =
@@ -481,6 +511,7 @@ if(
 
         WHERE id=?
         AND magasin_id=?
+        AND caisse_id=?
         AND statut='ouverte'
     ");
 
@@ -496,7 +527,8 @@ if(
         $statutValidation,
 
         $session_id,
-        $magasin_id
+        $magasin_id,
+        $caisse_id
     ]);
 
     $pdo->commit();
@@ -526,6 +558,8 @@ SELECT
 
     m.nom AS magasin_nom,
 
+    c.nom AS caisse_nom,
+
     (
         SELECT COUNT(*)
         FROM ventes v
@@ -539,6 +573,9 @@ ON u.id=sc.utilisateur_id
 
 LEFT JOIN magasins m
 ON m.id=sc.magasin_id
+
+LEFT JOIN caisses c
+ON c.id=sc.caisse_id
 
 LEFT JOIN utilisateurs uv
 ON uv.id = sc.valide_par
@@ -696,6 +733,8 @@ include 'includes/sidebar.php';
             <?= e($nomBoutique) ?>
             •
             <?= e($magasin['nom'] ?? '-') ?>
+            •
+            <?= e($caisse['nom'] ?? '-') ?>
         </p>
 
     </div>
@@ -712,6 +751,25 @@ include 'includes/sidebar.php';
     </div>
 
 </div>
+
+<?php if($isAdmin && count($caisses) > 1): ?>
+<form method="POST" class="bg-white dark:bg-slate-800 rounded-3xl shadow p-5 mb-6">
+    <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
+    <label class="font-bold" for="caisse_id">Caisse physique</label>
+    <div class="flex flex-col md:flex-row gap-3 mt-2">
+        <select id="caisse_id" name="caisse_id" class="border rounded-2xl p-4 dark:bg-slate-700" required>
+            <?php foreach($caisses as $availableCaisse): ?>
+                <option value="<?= (int)$availableCaisse['id'] ?>" <?= ((int)$availableCaisse['id'] === $caisse_id) ? 'selected' : '' ?>>
+                    <?= e($availableCaisse['nom'].' ('.$availableCaisse['code'].')') ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <button type="submit" name="changer_caisse" class="bg-slate-800 hover:bg-slate-900 text-white px-5 py-3 rounded-2xl font-bold">
+            Changer de caisse
+        </button>
+    </div>
+</form>
+<?php endif; ?>
 
 <!-- KPI -->
 

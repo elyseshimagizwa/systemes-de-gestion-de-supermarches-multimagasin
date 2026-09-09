@@ -365,10 +365,11 @@ SELECT
 
 FROM stock_mouvements sm
 
-INNER JOIN produits p
+LEFT JOIN produits p
 ON p.id = sm.produit_id
+AND p.magasin_id = sm.magasin_id
 
-INNER JOIN utilisateurs u
+LEFT JOIN utilisateurs u
 ON u.id = sm.utilisateur_id
 
 WHERE sm.magasin_id=?
@@ -696,6 +697,26 @@ include 'includes/sidebar.php';
 
     </select>
 
+        <option value="entree_commande" <?= $typeFilter=='entree_commande' ? 'selected' : '' ?>>
+            📥 Entrée commande
+        </option>
+
+        <option value="sortie_vente" <?= $typeFilter=='sortie_vente' ? 'selected' : '' ?>>
+            🧾 Sortie vente
+        </option>
+
+        <option value="retour_client" <?= $typeFilter=='retour_client' ? 'selected' : '' ?>>
+            ↩ Retour client
+        </option>
+
+        <option value="transfert_entree" <?= $typeFilter=='transfert_entree' ? 'selected' : '' ?>>
+            🔄 Transfert entrant
+        </option>
+
+        <option value="transfert_sortie" <?= $typeFilter=='transfert_sortie' ? 'selected' : '' ?>>
+            🔄 Transfert sortant
+        </option>
+
     <!-- QUANTITE -->
 
     <input
@@ -837,6 +858,22 @@ include 'includes/sidebar.php';
 
 <?php foreach($mouvements as $m): ?>
 
+<?php
+$movementLabels = [
+    'entree' => ['📥 Entrée', 'bg-green-100 text-green-700'],
+    'entree_commande' => ['📥 Entrée commande', 'bg-green-100 text-green-700'],
+    'ajout_stock' => ['➕ Ajout stock', 'bg-green-100 text-green-700'],
+    'sortie' => ['📤 Sortie', 'bg-red-100 text-red-700'],
+    'sortie_vente' => ['🧾 Sortie vente', 'bg-red-100 text-red-700'],
+    'perte' => ['🔴 Perte', 'bg-red-100 text-red-700'],
+    'retour_client' => ['↩ Retour client', 'bg-blue-100 text-blue-700'],
+    'transfert_entree' => ['🔄 Transfert entrant', 'bg-blue-100 text-blue-700'],
+    'transfert_sortie' => ['🔄 Transfert sortant', 'bg-purple-100 text-purple-700'],
+    'inventaire_correctif' => ['🟡 Inventaire', 'bg-yellow-100 text-yellow-700'],
+];
+$movementLabel = $movementLabels[$m['type']] ?? [ucfirst((string)$m['type']), 'bg-gray-100 text-gray-700'];
+?>
+
 <tr class="border-t hover:bg-gray-50">
 
     <td class="p-4 font-semibold">
@@ -847,31 +884,9 @@ include 'includes/sidebar.php';
 
     <td class="p-4 text-center">
 
-        <?php if($m['type']=='perte'): ?>
-
-        <span class="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs">
-
-            🔴 Perte
-
+        <span class="<?= e($movementLabel[1]) ?> px-3 py-1 rounded-full text-xs">
+            <?= e($movementLabel[0]) ?>
         </span>
-
-        <?php elseif($m['type']=='inventaire_correctif'): ?>
-
-        <span class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-xs">
-
-            🟡 Inventaire
-
-        </span>
-
-        <?php else: ?>
-
-        <span class="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs">
-
-            🟢 Ajout
-
-        </span>
-
-        <?php endif; ?>
 
     </td>
 

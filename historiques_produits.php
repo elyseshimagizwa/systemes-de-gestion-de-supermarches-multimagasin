@@ -72,6 +72,7 @@ FROM stock_mouvements sm
 
 LEFT JOIN produits p
 ON p.id = sm.produit_id
+AND p.magasin_id = sm.magasin_id
 
 LEFT JOIN utilisateurs u
 ON u.id = sm.utilisateur_id
@@ -161,6 +162,45 @@ $stmt->execute($params);
 
 $mouvements =
     $stmt->fetchAll();
+
+/* =========================================================
+   RESUME DU STOCK PAR PRODUIT
+========================================================= */
+
+$stmtStockResume = $pdo->prepare("
+SELECT
+    p.id,
+    p.nom,
+    p.codebarre,
+    p.quantite AS stock_restant,
+    COALESCE((
+        SELECT sm.ancien_stock
+        FROM stock_mouvements sm
+        WHERE sm.produit_id=p.id
+        AND sm.magasin_id=p.magasin_id
+        ORDER BY sm.id ASC
+        LIMIT 1
+    ), p.quantite) AS stock_debut,
+    COALESCE((
+        SELECT SUM(sm.quantite)
+        FROM stock_mouvements sm
+        WHERE sm.produit_id=p.id
+        AND sm.magasin_id=p.magasin_id
+        AND sm.type IN ('entree', 'entree_commande', 'transfert_entree', 'retour_client', 'ajout_stock')
+    ), 0) AS total_entrees,
+    COALESCE((
+        SELECT SUM(sm.quantite)
+        FROM stock_mouvements sm
+        WHERE sm.produit_id=p.id
+        AND sm.magasin_id=p.magasin_id
+        AND sm.type IN ('sortie', 'sortie_vente', 'transfert_sortie', 'perte')
+    ), 0) AS total_sorties
+FROM produits p
+WHERE p.magasin_id=?
+ORDER BY p.nom ASC
+");
+$stmtStockResume->execute([$magasin_id]);
+$stockResume = $stmtStockResume->fetchAll();
 
 /* =========================================================
    KPI
@@ -488,6 +528,36 @@ include 'includes/sidebar.php';
 
 </div>
 
+<div class="bg-white rounded-2xl shadow border overflow-x-auto mb-6">
+    <div class="p-5 border-b">
+        <h2 class="text-xl font-black">Stock par produit dans ce magasin</h2>
+        <p class="text-sm text-gray-500 mt-1">Stock au début de l’historique, mouvements cumulés et stock restant actuel.</p>
+    </div>
+    <table class="min-w-full text-sm">
+        <thead class="bg-gray-100">
+            <tr>
+                <th class="p-4 text-left">Produit</th>
+                <th class="p-4 text-center">Stock au début</th>
+                <th class="p-4 text-center">Entrées</th>
+                <th class="p-4 text-center">Sorties</th>
+                <th class="p-4 text-center">Stock restant</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($stockResume as $stock): ?>
+            <tr class="border-t hover:bg-gray-50">
+                <td class="p-4 font-semibold"><?= e($stock['nom']) ?><span class="block text-xs text-gray-500"><?= e($stock['codebarre'] ?? '') ?></span></td>
+                <td class="p-4 text-center"><?= (int)$stock['stock_debut'] ?></td>
+                <td class="p-4 text-center text-green-700 font-bold">+<?= (int)$stock['total_entrees'] ?></td>
+                <td class="p-4 text-center text-red-700 font-bold">-<?= (int)$stock['total_sorties'] ?></td>
+                <td class="p-4 text-center text-blue-700 font-black text-lg"><?= (int)$stock['stock_restant'] ?></td>
+            </tr>
+        <?php endforeach; ?>
+        <?php if (!$stockResume): ?><tr><td colspan="5" class="p-8 text-center text-gray-500">Aucun produit dans ce magasin.</td></tr><?php endif; ?>
+        </tbody>
+    </table>
+</div>
+
 <!-- =========================================================
      TABLE
 ========================================================= -->
@@ -558,6 +628,18 @@ if ($m['type'] == 'entree') {
     "➕ Entrée";
 }
 
+elseif ($m['type'] == 'entree_commande') {
+
+    $badge = "bg-green-100 text-green-700";
+    $label = "📥 Entrée commande";
+}
+
+elseif ($m['type'] == 'ajout_stock') {
+
+    $badge = "bg-green-100 text-green-700";
+    $label = "➕ Ajout stock";
+}
+
 elseif ($m['type'] == 'sortie') {
 
     $badge =
@@ -565,6 +647,18 @@ elseif ($m['type'] == 'sortie') {
 
     $label =
     "➖ Sortie";
+}
+
+elseif ($m['type'] == 'sortie_vente') {
+
+    $badge = "bg-red-100 text-red-700";
+    $label = "🧾 Sortie vente";
+}
+
+elseif ($m['type'] == 'retour_client') {
+
+    $badge = "bg-blue-100 text-blue-700";
+    $label = "↩ Retour client";
 }
 
 elseif ($m['type'] == 'perte') {

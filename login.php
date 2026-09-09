@@ -10,7 +10,7 @@ if (isLoggedIn()) {
 
     header(
         (currentUser()['role'] ?? '') === 'client'
-        ? 'Location: index.php'
+        ? 'Location: mes_commandes.php'
         : 'Location: dashboard.php'
     );
     exit;
@@ -28,6 +28,9 @@ $success = null;
 ========================================================= */
 
 $settings = getSettings();
+register_shutdown_function(static function (): void {
+    include __DIR__ . '/includes/footer.php';
+});
 
 /* =========================================================
    ALERTES URL
@@ -501,7 +504,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         header(
                             $user['role'] === 'client'
-                            ? "Location: index.php"
+                            ? "Location: mes_commandes.php"
                             : "Location: dashboard.php"
                         );
                         exit;

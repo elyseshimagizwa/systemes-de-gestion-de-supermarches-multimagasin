@@ -33,6 +33,8 @@ $isCaissier = ($role == 'caissier');
 */
 
 $currentMagasinId = currentMagasinId();
+$currentCaisseId = (int)(currentCaisseId($currentMagasinId) ?? 0);
+$currentSessionId = currentOpenCaisseId(null, $currentMagasinId);
 
 if($currentMagasinId<=0){
 
@@ -175,6 +177,7 @@ $currentMagasinId
                 'nom' => $p['nom'],
                 'qty' => $it['qty'],
                 'prix' => $p['prix_vente'],
+                'ancien_stock' => (int)$p['quantite'],
                 'sous_total' => $sousTotal
             ];
         }
@@ -197,6 +200,8 @@ $currentMagasinId
                 numero_ticket,
                 utilisateur_id,
                 magasin_id,
+                caisse_id,
+                session_caisse_id,
                 total,
                 montant_recu,
                 monnaie,
@@ -206,7 +211,7 @@ $currentMagasinId
             )
             VALUES
             (
-                ?,?,?,?,?,?,?,?,NOW()
+                ?,?,?,?,?,?,?,?,?,NOW()
             )
         ");
 
@@ -217,6 +222,10 @@ $numeroTicket,
 $user['id'],
 
 $currentMagasinId,
+
+$currentCaisseId,
+
+$currentSessionId,
 
 $totalTTC,
 
@@ -276,6 +285,35 @@ $item['id'],
 $currentMagasinId
 
 ]);
+
+            if ($update->rowCount() !== 1) {
+                throw new Exception("Le stock du magasin actif n'a pas pu être mis à jour");
+            }
+
+            $stockHistory = $pdo->prepare("
+                INSERT INTO stock_mouvements
+                (
+                    magasin_id,
+                    produit_id,
+                    type,
+                    quantite,
+                    ancien_stock,
+                    nouveau_stock,
+                    motif,
+                    utilisateur_id,
+                    date_mouvement
+                )
+                VALUES (?, ?, 'sortie', ?, ?, ?, ?, ?, NOW())
+            ");
+            $stockHistory->execute([
+                $currentMagasinId,
+                $item['id'],
+                $item['qty'],
+                $item['ancien_stock'],
+                $item['ancien_stock'] - $item['qty'],
+                'Vente directe en magasin',
+                $user['id']
+            ]);
         }
 
         $pdo->commit();

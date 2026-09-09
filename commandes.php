@@ -2,9 +2,10 @@
 <?php
 
 require_once 'config.php';
+require_once __DIR__ . '/includes/supplier-orders.php';
 
 requireLogin();
-requireAdmin();
+requireCaissier();
 
 /* =========================
    ACCES ADMIN + CAISSIER
@@ -37,6 +38,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
 
     try {
 
+        $portalToken = bin2hex(random_bytes(32));
+
         $fournisseurCheck = $pdo->prepare("SELECT id FROM fournisseurs WHERE id=? AND magasin_id=? LIMIT 1");
         $fournisseurCheck->execute([(int)$_POST['fournisseur_id'], currentMagasinId()]);
 
@@ -53,14 +56,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                 fournisseur_id,
                 magasin_id,
                 utilisateur_id,
-                statut
+                statut,
+                portail_token
             )
             VALUES
             (
                 ?,
                 ?,
                 ?,
-                'En attente'
+                'En attente',
+                ?
             )
         ");
 
@@ -68,6 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             (int)$_POST['fournisseur_id'],
             currentMagasinId(),
             $user['id']
+            ,$portalToken
         ]);
 
         $commandeId = $pdo->lastInsertId();
@@ -160,7 +166,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
 
         $pdo->commit();
 
-        flash('success','Commande créée');
+        $supplierStmt = $pdo->prepare('SELECT f.*, m.nom AS magasin_nom FROM fournisseurs f JOIN magasins m ON m.id=f.magasin_id WHERE f.id=? AND f.magasin_id=? LIMIT 1');
+        $supplierStmt->execute([(int)$_POST['fournisseur_id'], (int)currentMagasinId()]);
+        $supplier = $supplierStmt->fetch();
+        $lineStmt = $pdo->prepare('SELECT lc.quantite, lc.prix_achat, p.nom AS produit_nom FROM ligne_commandes lc JOIN produits p ON p.id=lc.produit_id WHERE lc.commande_id=? ORDER BY lc.id');
+        $lineStmt->execute([(int)$commandeId]);
+        $orderData = ['id' => $commandeId, 'magasin_nom' => $supplier['magasin_nom'], 'portal_token' => $portalToken];
+        $orderLines = $lineStmt->fetchAll();
+        $emailResult = sendSupplierOrderEmail($supplier, $orderData, $orderLines, getSettings());
+
+        if ($emailResult['sent']) {
+            $pdo->prepare('UPDATE commandes SET email_envoye=NOW(), email_erreur=NULL, email_tentatives=email_tentatives+1, prochaine_relance=NULL WHERE id=?')->execute([(int)$commandeId]);
+            flash('success','Commande créée et envoyée au fournisseur par email');
+        } else {
+            $pdo->prepare('UPDATE commandes SET email_erreur=?, email_tentatives=email_tentatives+1, prochaine_relance=DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE id=?')->execute([$emailResult['error'], (int)$commandeId]);
+            flash('success','Commande créée, mais l’email fournisseur n’a pas été envoyé : '.$emailResult['error']);
+        }
 
     } catch(Exception $e) {
 
@@ -171,6 +192,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
 
     header('Location: commandes.php');
 
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['renvoyer_email'])) {
+    verify_csrf();
+    $id = (int)$_POST['renvoyer_email'];
+    $stmt = $pdo->prepare('SELECT c.*, f.nom AS fournisseur_nom, f.email, m.nom AS magasin_nom FROM commandes c JOIN fournisseurs f ON f.id=c.fournisseur_id JOIN magasins m ON m.id=c.magasin_id WHERE c.id=? AND c.magasin_id=?');
+    $stmt->execute([$id, (int)currentMagasinId()]);
+    $order = $stmt->fetch();
+    if ($order) {
+        $lines = $pdo->prepare('SELECT lc.quantite, lc.prix_achat, p.nom AS produit_nom FROM ligne_commandes lc JOIN produits p ON p.id=lc.produit_id WHERE lc.commande_id=? ORDER BY lc.id');
+        $lines->execute([$id]);
+        $result = sendSupplierOrderEmail($order, $order, $lines->fetchAll(), getSettings());
+        if ($result['sent']) {
+            $pdo->prepare('UPDATE commandes SET email_envoye=NOW(), email_erreur=NULL, email_tentatives=email_tentatives+1, prochaine_relance=NULL WHERE id=?')->execute([$id]);
+            flash('success', 'Email renvoyé au fournisseur.');
+        } else {
+            $pdo->prepare('UPDATE commandes SET email_erreur=?, email_tentatives=email_tentatives+1, prochaine_relance=DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE id=?')->execute([$result['error'], $id]);
+            flash('error', 'Échec du renvoi : '.$result['error']);
+        }
+    }
+    header('Location: commandes.php');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['expedier'])) {
+    verify_csrf();
+    $id = (int)$_POST['expedier'];
+    $datePrevue = $_POST['date_livraison_prevue'] ?: null;
+    $pdo->prepare("UPDATE commandes SET fournisseur_statut='Expédiée', date_expedition=NOW(), date_livraison_prevue=? WHERE id=? AND magasin_id=?")->execute([$datePrevue, $id, (int)currentMagasinId()]);
+    $notify = $pdo->prepare('SELECT c.*, f.*, m.nom AS magasin_nom FROM commandes c JOIN fournisseurs f ON f.id=c.fournisseur_id JOIN magasins m ON m.id=c.magasin_id WHERE c.id=?');
+    $notify->execute([$id]);
+    $shipment = $notify->fetch();
+    $shipmentLines = $pdo->prepare('SELECT lc.quantite, lc.prix_achat, p.nom AS produit_nom FROM ligne_commandes lc JOIN produits p ON p.id=lc.produit_id WHERE lc.commande_id=?');
+    $shipmentLines->execute([$id]);
+    sendSupplierOrderEmail($shipment, array_merge($shipment, ['email_subject' => 'Confirmation d’expédition fournisseur', 'email_message' => 'La commande a été marquée comme expédiée. Date de livraison prévue : ' . ($datePrevue ?: 'à confirmer')]), $shipmentLines->fetchAll(), getSettings());
+    flash('success', 'Expédition enregistrée.');
+    header('Location: commandes.php');
     exit;
 }
 
@@ -296,7 +355,7 @@ if (isset($_GET['recevoir'])) {
         ========================== */
         $pdo->prepare("
             UPDATE commandes
-            SET statut='Reçue totalement'
+            SET statut='Reçue totalement', fournisseur_statut='Livrée', date_livraison=NOW()
             WHERE id=?
         ")->execute([$id]);
 
@@ -371,7 +430,8 @@ $produits = $pdo->query("
 $list = $pdo->query("
     SELECT
         c.*,
-        f.nom fournisseur
+        f.nom fournisseur,
+        f.email fournisseur_email
 
     FROM commandes c
 
@@ -562,6 +622,10 @@ include 'includes/sidebar.php';
 
 <th class="p-3 text-left">Statut</th>
 
+<th class="p-3 text-left">État fournisseur</th>
+
+<th class="p-3 text-left">Email fournisseur</th>
+
 <th class="p-3 text-left">Date</th>
 
 <th class="p-3 text-left">Actions</th>
@@ -611,6 +675,25 @@ include 'includes/sidebar.php';
     </td>
 
     <td class="p-3">
+        <?= e($c['fournisseur_statut'] ?? 'En attente') ?>
+        <?php if(!empty($c['date_livraison_prevue'])): ?>
+            <small class="block text-gray-500">Livraison prévue : <?= e($c['date_livraison_prevue']) ?></small>
+        <?php endif; ?>
+    </td>
+
+    <td class="p-3">
+        <?php if(!empty($c['email_envoye'])): ?>
+            <span class="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs">✅ Envoyée</span>
+            <small class="block text-gray-500"><?= e($c['email_envoye']) ?></small>
+        <?php elseif(!empty($c['email_erreur'])): ?>
+            <span class="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs">❌ Échec</span>
+            <small class="block text-red-500"><?= e($c['email_erreur']) ?></small>
+        <?php else: ?>
+            <span class="text-gray-500">Non envoyée</span>
+        <?php endif; ?>
+    </td>
+
+    <td class="p-3">
 
         <?= e($c['date_commande']) ?>
 
@@ -639,6 +722,18 @@ include 'includes/sidebar.php';
 
         </span>
 
+        <?php endif; ?>
+
+        <?php if($c['statut'] !== 'Reçue totalement'): ?>
+        <form method="post" class="inline-block mt-2">
+            <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
+            <button name="renvoyer_email" value="<?= (int)$c['id'] ?>" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm">Renvoyer l’email</button>
+        </form>
+        <form method="post" class="inline-block mt-2">
+            <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
+            <input type="date" name="date_livraison_prevue" class="border rounded-lg p-2" required>
+            <button name="expedier" value="<?= (int)$c['id'] ?>" class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-xl text-sm">Marquer expédiée</button>
+        </form>
         <?php endif; ?>
 
     </td>

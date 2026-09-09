@@ -1,0 +1,15 @@
+ALTER TABLE commandes
+  ADD COLUMN email_envoye datetime NULL,
+  ADD COLUMN email_erreur text DEFAULT NULL,
+  ADD COLUMN email_tentatives int NOT NULL DEFAULT 0,
+  ADD COLUMN prochaine_relance datetime NULL,
+  ADD COLUMN portail_token char(64) NULL,
+  ADD COLUMN fournisseur_statut enum('En attente','Acceptée','Refusée','Expédiée','Livrée') NOT NULL DEFAULT 'En attente',
+  ADD COLUMN date_confirmation_fournisseur datetime NULL,
+  ADD COLUMN date_expedition datetime NULL,
+  ADD COLUMN date_livraison_prevue date NULL,
+  ADD COLUMN date_livraison datetime NULL,
+  ADD COLUMN fournisseur_commentaire text DEFAULT NULL,
+  ADD UNIQUE KEY uq_commande_portail_token (portail_token),
+  ADD KEY idx_commandes_relance (prochaine_relance),
+  ADD KEY idx_commandes_fournisseur_statut (fournisseur_statut);
