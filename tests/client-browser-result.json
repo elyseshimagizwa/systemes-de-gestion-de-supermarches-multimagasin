@@ -1,0 +1,43 @@
+{
+  "steps": [
+    {
+      "name": "Panier visible et total correct",
+      "ok": true
+    },
+    {
+      "name": "Inscription retourne index connecte sans liens login/inscription",
+      "ok": true
+    },
+    {
+      "name": "Panier conserve apres inscription",
+      "ok": true
+    },
+    {
+      "name": "Confirmation commande apres redirection",
+      "ok": true
+    },
+    {
+      "name": "Une commande, stock et lot debites une fois",
+      "ok": true
+    },
+    {
+      "name": "Double validation refusee sans nouveau debit",
+      "ok": true
+    },
+    {
+      "name": "Login sans footer",
+      "ok": true
+    },
+    {
+      "name": "Connexion client retourne index connecte",
+      "ok": true
+    },
+    {
+      "name": "Commande visible dans espace client",
+      "ok": true
+    }
+  ],
+  "errors": [],
+  "status": "PASS",
+  "cleanup": "Dedicated customer, orders, product and lots removed; security audit retained"
+}

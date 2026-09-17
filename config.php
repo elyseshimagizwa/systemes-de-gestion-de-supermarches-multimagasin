@@ -920,6 +920,11 @@ function bootMultiMagasin()
 
     $user = currentUser();
 
+    // Le client choisit son magasin au retrait, pas dans le back-office.
+    if (($user['role'] ?? '') === 'client') {
+        return;
+    }
+
     /*
     |--------------------------------------------------
     | BLOQUER SI PAS DE MAGASIN

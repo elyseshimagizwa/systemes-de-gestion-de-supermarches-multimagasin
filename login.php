@@ -10,7 +10,7 @@ if (isLoggedIn()) {
 
     header(
         (currentUser()['role'] ?? '') === 'client'
-        ? 'Location: mes_commandes.php'
+        ? 'Location: index.php'
         : 'Location: dashboard.php'
     );
     exit;
@@ -28,9 +28,7 @@ $success = null;
 ========================================================= */
 
 $settings = getSettings();
-register_shutdown_function(static function (): void {
-    include __DIR__ . '/includes/footer.php';
-});
+
 
 /* =========================================================
    ALERTES URL
@@ -504,7 +502,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         header(
                             $user['role'] === 'client'
-                            ? "Location: mes_commandes.php"
+                            ? "Location: index.php"
                             : "Location: dashboard.php"
                         );
                         exit;
@@ -805,7 +803,7 @@ body{
                 type="email"
                 name="email"
                 required
-                autocomplete="off"
+                autocomplete="email"
                 maxlength="150"
                 value="<?= e($_POST['email'] ?? '') ?>"
                 class="input"
@@ -885,6 +883,7 @@ body{
         <a href="index.php" class="text-blue-500 hover:text-blue-700"  style="display: block; text-align: center; margin-top: 10px; border: 1px solid #5039c5; padding: 10px; border-radius: 15px; background-color: rgba(59, 130, 246, 0.7); color: white; text-decoration: none; transition: background-color 0.3s ease, color 0.3s ease;">
             Retour à l'accueil
         </a>
+        <p class="mt-4 text-center"><a href="inscription_client.php">Nouveau client ? Créer un compte</a></p>
         <p id="returnMessage" style="text-align: center; margin-top: 10px; display: none; color: #5039c5; font-weight: bold;">
             Retour à l'accueil
         </p>
@@ -899,15 +898,7 @@ body{
 
     </div>
 
-    <!-- FOOTER -->
 
-    <div class="mt-5 text-center text-slate-500 text-sm">
-
-        © <?= date('Y') ?>
-
-        <?= e($settings['nom_boutique'] ?? 'POS PREMIUM') ?>
-
-    </div>
 
 </div>
 

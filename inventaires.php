@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/includes/stock-quantities.php';
 
 requireLogin();
 
@@ -71,11 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $inventoryId = (int)($_POST['inventaire_id'] ?? 0);
             $productId = (int)($_POST['produit_id'] ?? 0);
             $barcode = trim((string)($_POST['codebarre'] ?? ''));
-            $counted = filter_var($_POST['quantite_comptee'] ?? null, FILTER_VALIDATE_INT);
-
-            if ($counted === false || $counted === null || $counted < 0) {
-                throw new RuntimeException('La quantité comptée doit être un entier positif ou zéro.');
-            }
+            $counted = stockQuantity($_POST['quantite_comptee'] ?? null);
 
             $inventory = $pdo->prepare("SELECT * FROM inventaires WHERE id=? AND magasin_id=? AND statut='comptage' FOR UPDATE");
             $pdo->beginTransaction();
@@ -104,15 +101,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $line = $pdo->prepare('SELECT id, stock_theorique FROM inventaire_lignes WHERE inventaire_id=? AND produit_id=? FOR UPDATE');
             $line->execute([$inventoryId, (int)$product['id']]);
             $existing = $line->fetch();
-            $theoretical = $existing ? (int)$existing['stock_theorique'] : (int)$product['quantite'];
-            $difference = (int)$counted - $theoretical;
+            // Each recount establishes a new snapshot at the time of that count.
+            $theoretical = stockQuantity($product['quantite']);
+            $difference = round($counted - $theoretical, 3);
 
             if ($existing) {
-                $save = $pdo->prepare('UPDATE inventaire_lignes SET quantite_comptee=?, ecart=?, utilisateur_id=?, compte_le=NOW() WHERE id=?');
-                $save->execute([(int)$counted, $difference, (int)$user['id'], (int)$existing['id']]);
+                $save = $pdo->prepare('UPDATE inventaire_lignes SET stock_theorique=?, quantite_comptee=?, ecart=?, utilisateur_id=?, compte_le=NOW() WHERE id=?');
+                $save->execute([$theoretical, $counted, $difference, (int)$user['id'], (int)$existing['id']]);
             } else {
                 $save = $pdo->prepare('INSERT INTO inventaire_lignes (inventaire_id, produit_id, stock_theorique, quantite_comptee, ecart, utilisateur_id) VALUES (?, ?, ?, ?, ?, ?)');
-                $save->execute([$inventoryId, (int)$product['id'], $theoretical, (int)$counted, $difference, (int)$user['id']]);
+                $save->execute([$inventoryId, (int)$product['id'], $theoretical, $counted, $difference, (int)$user['id']]);
             }
 
             $pdo->commit();
@@ -149,23 +147,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $lines = $pdo->prepare('SELECT il.*, p.nom FROM inventaire_lignes il JOIN produits p ON p.id=il.produit_id AND p.magasin_id=? WHERE il.inventaire_id=? FOR UPDATE');
             $lines->execute([$selectedMagasinId, $inventoryId]);
-            $update = $pdo->prepare('UPDATE produits SET quantite=? WHERE id=? AND magasin_id=?');
-            $movement = $pdo->prepare("INSERT INTO stock_mouvements (produit_id, magasin_id, type, quantite, ancien_stock, nouveau_stock, motif, utilisateur_id, date_mouvement) VALUES (?, ?, 'inventaire_correctif', ?, ?, ?, ?, ?, NOW())");
-
             foreach ($lines->fetchAll() as $line) {
-                $productStmt = $pdo->prepare('SELECT quantite FROM produits WHERE id=? AND magasin_id=? FOR UPDATE');
-                $productStmt->execute([(int)$line['produit_id'], $selectedMagasinId]);
-                $current = $productStmt->fetchColumn();
-                if ($current === false) {
-                    throw new RuntimeException('Un produit de l’inventaire n’existe plus dans ce magasin.');
-                }
-                $currentStock = (int)$current;
-                $countedStock = (int)$line['quantite_comptee'];
-                $difference = $countedStock - $currentStock;
-                if ($difference !== 0) {
-                    $update->execute([$countedStock, (int)$line['produit_id'], $selectedMagasinId]);
-                    $movement->execute([(int)$line['produit_id'], $selectedMagasinId, abs($difference), $currentStock, $countedStock, 'Inventaire ' . $inventory['reference'], (int)$user['id']]);
-                }
+                applyInventoryCorrection($pdo, (int)$line['produit_id'], $selectedMagasinId, (float)$line['stock_theorique'], (float)$line['quantite_comptee'], (string)$inventory['reference'], (int)$user['id']);
             }
 
             $pdo->prepare("UPDATE inventaires SET statut='validee', validateur_id=?, date_validation=NOW() WHERE id=?")->execute([(int)$user['id'], $inventoryId]);
@@ -259,7 +242,7 @@ include __DIR__ . '/includes/sidebar.php';
     <?php else: ?>
         <section class="mb-8 rounded-xl border bg-white p-5 shadow-sm">
             <div class="mb-5 flex flex-col justify-between gap-3 md:flex-row">
-                <div><h2 class="text-xl font-bold">Session <?= e($active['reference']) ?></h2><p class="text-slate-500">Produits comptés : <?= (int)$active['lignes'] ?> · Écart total : <?= (int)$active['total_ecart'] ?></p></div>
+                <div><h2 class="text-xl font-bold">Session <?= e($active['reference']) ?></h2><p class="text-slate-500">Produits comptés : <?= (int)$active['lignes'] ?> · Écart total : <?= number_format((float)$active['total_ecart'], 3, ',', ' ') ?></p></div>
                 <span class="rounded-full bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-800"><?= e($active['statut']) ?></span>
             </div>
 
@@ -270,12 +253,12 @@ include __DIR__ . '/includes/sidebar.php';
                     <input type="hidden" name="inventaire_id" value="<?= (int)$active['id'] ?>">
                     <select name="produit_id" class="rounded-lg border p-3 md:col-span-2"><option value="">Choisir un produit</option><?php foreach ($products as $product): ?><option value="<?= (int)$product['id'] ?>"><?= e($product['nom']) ?> · <?= e($product['codebarre']) ?></option><?php endforeach; ?></select>
                     <input name="codebarre" class="rounded-lg border p-3" placeholder="ou code-barres">
-                    <input name="quantite_comptee" type="number" min="0" required class="rounded-lg border p-3" placeholder="Quantité comptée">
+                    <input name="quantite_comptee" type="number" min="0" step="0.001" required class="rounded-lg border p-3" placeholder="Quantité comptée">
                     <button class="rounded-lg bg-emerald-600 px-4 py-3 font-semibold text-white hover:bg-emerald-700 md:col-span-4">Enregistrer le comptage</button>
                 </form>
                 <form method="post" class="mt-5"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><input type="hidden" name="action" value="submit"><input type="hidden" name="inventaire_id" value="<?= (int)$active['id'] ?>"><button class="rounded-lg bg-amber-600 px-5 py-3 font-semibold text-white hover:bg-amber-700">Soumettre pour validation</button></form>
             <?php elseif ($isAdmin): ?>
-                <div class="mt-5 overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr class="border-b text-slate-500"><th class="p-3">Produit</th><th class="p-3">Code-barres</th><th class="p-3">Théorique</th><th class="p-3">Compté</th><th class="p-3">Écart</th></tr></thead><tbody><?php foreach ($lines as $line): ?><tr class="border-b"><td class="p-3"><?= e($line['nom']) ?></td><td class="p-3"><?= e($line['codebarre']) ?></td><td class="p-3"><?= (int)$line['stock_theorique'] ?></td><td class="p-3 font-semibold"><?= (int)$line['quantite_comptee'] ?></td><td class="p-3 <?= (int)$line['ecart'] === 0 ? 'text-green-600' : 'text-red-600' ?>"><?= (int)$line['ecart'] ?></td></tr><?php endforeach; ?></tbody></table></div>
+                <div class="mt-5 overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr class="border-b text-slate-500"><th class="p-3">Produit</th><th class="p-3">Code-barres</th><th class="p-3">Théorique</th><th class="p-3">Compté</th><th class="p-3">Écart</th></tr></thead><tbody><?php foreach ($lines as $line): ?><tr class="border-b"><td class="p-3"><?= e($line['nom']) ?></td><td class="p-3"><?= e($line['codebarre']) ?></td><td class="p-3"><?= number_format((float)$line['stock_theorique'], 3, ',', ' ') ?></td><td class="p-3 font-semibold"><?= number_format((float)$line['quantite_comptee'], 3, ',', ' ') ?></td><td class="p-3 <?= abs((float)$line['ecart']) < 0.000001 ? 'text-green-600' : 'text-red-600' ?>"><?= number_format((float)$line['ecart'], 3, ',', ' ') ?></td></tr><?php endforeach; ?></tbody></table></div>
                 <div class="flex flex-wrap gap-3"><form method="post"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><input type="hidden" name="action" value="validate"><input type="hidden" name="inventaire_id" value="<?= (int)$active['id'] ?>"><button class="rounded-lg bg-emerald-600 px-5 py-3 font-semibold text-white hover:bg-emerald-700">Valider et corriger le stock</button></form><form method="post"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><input type="hidden" name="action" value="cancel"><input type="hidden" name="inventaire_id" value="<?= (int)$active['id'] ?>"><button class="rounded-lg bg-red-600 px-5 py-3 font-semibold text-white hover:bg-red-700">Annuler</button></form></div>
             <?php else: ?><p class="text-amber-700">Cet inventaire attend la validation d’un administrateur.</p><?php endif; ?>
         </section>

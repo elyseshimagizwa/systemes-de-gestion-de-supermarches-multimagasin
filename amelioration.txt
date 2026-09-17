@@ -3,8 +3,37 @@ Project de gestion supermarcher/amelioration recommandes
 Ton système est déjà une base avancée de gestion de supermarché multi-magasins. Il couvre beaucoup de fonctions importantes : caisse, stocks, achats, transferts, fournisseurs, commandes clients, rapports et sécurité.
 Cependant, je le classerais comme un prototype avancé ou une version pré-production, pas encore comme un système totalement prêt pour un usage professionnel intensif. Les principales améliorations concernent la fiabilité, la traçabilité, les permissions et la maintenance.
 
+Suivi d’avancement — mise à jour documentaire du 17/09/2026
+Cette synthèse repose sur une première lecture du code et des migrations, sans validation en conditions réelles ni vérification des migrations appliquées à la base.
+
+Légende des statuts
+- À faire : travail restant identifié.
+- Développé : code présent ; cela ne signifie pas que le fonctionnement est validé.
+- À tester : vérification fonctionnelle et tests de non-régression nécessaires.
+- Validé : tests exécutés avec succès et règles métier confirmées. Aucun module n’est déclaré validé par cette analyse.
+- À vérifier : périmètre non analysé suffisamment pour conclure.
+Un module peut contenir des éléments développés et des corrections à faire.
+
+Synthèse
+1. Inventaire complet : développé en partie ; cohérence à corriger et à tester.
+2. Produits avancés : développé en partie ; prise en charge des décimales à compléter et à tester.
+3. Commandes fournisseurs : fonctionnalités présentes ; règles et quantités à corriger ou confirmer, puis à tester.
+4. Commandes clients : développé en partie ; transitions et réservation temporaire à fiabiliser.
+4bis. Parcours client web (inscription, connexion, commande) : développé et testé bout en bout le 17/09/2026 — inscription avec session complète et retour à l’index connecté, masquage des liens Login/Inscription, panier conservé et mono-magasin, validation à jeton unique contre les doubles soumissions, compte client vérifié avant commande, connexion sans footer, stock et lots débités une seule fois. Preuve : tests/client-browser.cjs exécuté sous Chrome headless, status PASS, 9/9 étapes, sans erreur JavaScript ni HTTP 4xx/5xx. Correction associée : bootMultiMagasin() n’entrave plus les clients sans magasin (config.php). Test nettoyé : compte, commande, produit et lots dédiés supprimés.
+5 à 12. Retours, permissions, sécurité, sauvegardes, rapports, architecture, tests et performance : à vérifier en détail. Les recommandations existantes restent à examiner ; leur présence dans cette liste ne signifie pas qu’elles sont réalisées.
+
+Les listes ci-dessous et l’ordre conseillé constituent les objectifs de la feuille de route, pas une liste de fonctionnalités toutes absentes du code.
+
 Améliorations prioritaires
 1.Inventaire complet
+Statut : développé en partie — comptage décimal et correction différée testés ; validation fonctionnelle complète encore à faire.
+Avancement du 17/09/2026 : inventaires.php utilise un helper commun de quantités (trois décimales), actualise le stock théorique à chaque recomptage et applique l’écart au stock courant à la validation. Les quantités affichées conservent les décimales.
+Preuve ciblée : tests/inventory-decimals.php exécuté sur MariaDB avec tables temporaires isolées, RESULT=PASS et code PHP 0. Théorique 10,500, compté 10,250, vente simulée 0,500 : produit et lots finissent à 9,750, avec un mouvement correctif de 0,250. Entrées invalides, magasin incorrect, stock négatif et rollback contrôlés. Ce test ne couvre pas les formulaires HTTP ni les accès concurrents.
+Limites : un surplus crée un lot bloqué à contrôler ; un déficit portant sur plusieurs lots est refusé faute de comptage par lot. La vérification stock/lots est obligatoire. L’intégration des réservations clients reste à faire.
+Constat : les sessions, le comptage, la validation administrative et les corrections dans stock_mouvements sont présents.
+Reste à faire : comptage détaillé par lot, traitement des surplus bloqués, intégration des réservations et validation du parcours complet dans le navigateur.
+À tester en complément : recomptages successifs via formulaire, créations simultanées de sessions, ventes concurrentes et validation administrative de bout en bout. Le scénario isolé de vente entre comptage et validation est déjà testé ci-dessus.
+Objectifs :
 o	Créer des sessions d’inventaire par magasin.
 o	Scanner ou saisir les produits comptés.
 o	Comparer stock théorique et stock réel.
@@ -13,6 +42,11 @@ o	Enregistrer automatiquement les corrections dans stock_mouvements.
 
 
 2.Gestion avancée des produits
+Statut : développé en partie — intégration à compléter, puis à tester.
+Constat : les migrations prévoient lots, unités, quantités décimales et variantes. La caisse traite les quantités décimales, mais plusieurs autres parcours utilisent encore des entiers.
+Reste à faire : harmoniser saisie, stockage, calculs et affichage des quantités dans les inventaires, achats et commandes clients ; vérifier le fonctionnement des lots, de FIFO et des variantes de bout en bout.
+À tester : un même produit à quantité fractionnaire sur tous les parcours concernés, avec contrôle des lots et des arrondis.
+Objectifs :
 o	Ajouter les lots, numéros de lot et dates d’expiration.
 o	Appliquer la méthode FIFO: vendre d’abord les produits les plus anciens.
 o	Gérer les produits vendus à l’unité, au poids ou au volume.
@@ -20,9 +54,14 @@ o	Ajouter les unités de mesure: kg, litre, carton, pièce.
 o	Ajouter des variantes de produits.
 
 
-fimition. en haut<<<
+Note d’avancement : les sections précédentes sont partiellement développées, mais restent à corriger et à tester. Elles ne sont pas encore déclarées validées.
 
 3.Amélioration des commandes fournisseurs
+Statut : développé en partie — corrections et règles à confirmer, puis à tester.
+Constat : le code contient des réceptions partielles, le suivi des quantités reçues, manquantes et endommagées, ainsi qu’un bon imprimable avec comparaison des prix prévus et reçus.
+Reste à faire : préserver les décimales lors de la création des commandes et de la lecture du stock existant à la réception ; confirmer si les quantités manquantes et endommagées soldent la commande ou restent à remplacer.
+À tester : réceptions successives, dépassement du restant, conservation du stock fractionnaire et cohérence du bon avec les lots et mouvements enregistrés.
+Objectifs :
 o	Autoriser les réceptions partielles.
 o	Enregistrer les quantités commandées, reçues et restantes.
 o	Gérer les produits manquants ou endommagés.
@@ -30,6 +69,11 @@ o	Comparer automatiquement le prix prévu et le prix reçu.
 o	Ajouter un bon de réception imprimable.
 
 4.Workflow des commandes clients
+Statut : développé en partie — transitions et réservation temporaire à fiabiliser, puis à tester.
+Constat : les statuts, notifications et historiques existent déjà. La commande diminue actuellement le stock et consomme les lots dès sa création ; une vérification de la liste des statuts ne suffit pas à encadrer les transitions.
+Reste à faire : définir les transitions autorisées et les états définitifs ; distinguer stock physique, réservé et disponible ; prévoir une échéance configurable et une expiration automatique ; libérer le stock une seule fois en cas d’annulation, refus ou expiration, avec traçabilité des lots et des mouvements.
+À tester : transitions interdites, demandes répétées ou concurrentes, expiration, libération unique des réservations et isolation par magasin. Compléter l’historique existant plutôt que le recréer.
+Objectifs :
 o	Définir clairement les transitions autorisées entre statuts.
 o	Ajouter une réservation temporaire du stock.
 o	Libérer automatiquement le stock des commandes expirées.

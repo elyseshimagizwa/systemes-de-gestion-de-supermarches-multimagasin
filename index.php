@@ -7,7 +7,13 @@ require_once __DIR__ . '/includes/icons.php';
 require_once __DIR__ . '/includes/client-orders.php';
 
 $errors = [];
-$success = null;
+$success = $_SESSION['client_order_success'] ?? null;
+unset($_SESSION['client_order_success']);
+if (empty($_SESSION['checkout_token'])) {
+    $_SESSION['checkout_token'] = bin2hex(random_bytes(32));
+}
+$magasinId = 0;
+$paymentMethod = '';
 $old = ['nom' => '', 'email' => ''];
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -63,31 +69,39 @@ try {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     verify_csrf();
 
-    $old['nom'] = $isClientLoggedIn ? $clientUser['nom'] : trim((string)($_POST['nom'] ?? ''));
-    $old['email'] = $isClientLoggedIn ? $clientUser['email'] : strtolower(trim((string)($_POST['email'] ?? '')));
-    $password = (string)($_POST['password'] ?? '');
+    if (!$isClientLoggedIn) {
+        $errors[] = 'Connectez-vous ou créez votre compte client avant de confirmer la commande.';
+    }
+    if (!is_string($_POST['checkout_token'] ?? null) || !hash_equals($_SESSION['checkout_token'], $_POST['checkout_token'])) {
+        $errors[] = 'Cette validation a déjà été utilisée ou a expiré. Vérifiez votre panier avant de réessayer.';
+    }
+
     $magasinId = (int)($_POST['magasin_id'] ?? 0);
     $paymentMethod = trim((string)($_POST['mode_paiement'] ?? ''));
     $allowedPaymentMethods = ['Paiement à la caisse', 'Paiement au retrait'];
     $postedCart = json_decode((string)($_POST['cart'] ?? '{}'), true);
-    if (is_array($postedCart)) {
-        $_SESSION['client_cart'] = [];
+    $cart = [];
+    if (!is_array($postedCart) || count($postedCart) > 100) {
+        $errors[] = 'Panier invalide (100 produits maximum).';
+    } else {
         foreach ($postedCart as $productId => $quantity) {
-            if ((int)$productId > 0 && (int)$quantity > 0) {
-                $_SESSION['client_cart'][(int)$productId] = min((int)$quantity, 999);
+            if (!ctype_digit((string)$productId) || (int)$productId < 1 || !is_scalar($quantity)
+                || !preg_match('/^[1-9][0-9]{0,2}$/D', (string)$quantity)) {
+                $errors[] = 'Les quantités doivent être des nombres entiers de 1 à 999.';
+                break;
             }
+            $cart[(int)$productId] = (int)$quantity;
         }
     }
-    $cart = $_SESSION['client_cart'];
+    if (!$errors) {
+        $_SESSION['client_cart'] = $cart;
+    }
 
     if ($old['nom'] === '' || strlen($old['nom']) < 2) {
         $errors[] = 'Veuillez saisir votre nom complet.';
     }
     if (!filter_var($old['email'], FILTER_VALIDATE_EMAIL)) {
         $errors[] = 'Veuillez saisir une adresse email valide.';
-    }
-    if (!$isClientLoggedIn && strlen($password) < 6) {
-        $errors[] = 'Le mot de passe doit contenir au moins 6 caractères.';
     }
     if (!$cart) {
         $errors[] = 'Votre panier est vide.';
@@ -103,13 +117,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
         $errors[] = 'Veuillez choisir un magasin de retrait valide.';
     }
 
-    if (!$errors && !$isClientLoggedIn) {
-        $existing = $pdo->prepare('SELECT id FROM utilisateurs WHERE email=? LIMIT 1');
-        $existing->execute([$old['email']]);
-        if ($existing->fetch()) {
-            $errors[] = 'Cette adresse email possède déjà un compte. Utilisez une autre adresse.';
-        }
-    }
 
     if (!$errors) {
         $pdo->beginTransaction();
@@ -140,12 +147,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                 $lines[] = [$productId, $products[$productId]['nom'], $quantity, $price, $subtotal];
             }
 
-            if ($isClientLoggedIn) {
-                $userId = (int)$clientUser['id'];
-            } else {
-                $userStmt = $pdo->prepare("INSERT INTO utilisateurs (nom, email, mot_de_passe, role, magasin_id, statut) VALUES (?, ?, ?, 'client', ?, 'actif')");
-                $userStmt->execute([$old['nom'], $old['email'], password_hash($password, PASSWORD_DEFAULT), $magasinId]);
-                $userId = (int)$pdo->lastInsertId();
+            $userId = (int)$clientUser['id'];
+            $accountStmt = $pdo->prepare("SELECT id FROM utilisateurs WHERE id=? AND role='client' AND statut='actif' AND COALESCE(force_logout,0)=0 FOR UPDATE");
+            $accountStmt->execute([$userId]);
+            if (!$accountStmt->fetchColumn()) {
+                throw new RuntimeException('Votre compte client doit être actif pour commander.');
             }
             $number = 'WEB-' . date('YmdHis') . '-' . random_int(1000, 9999);
             $pickupCode = 'RET-' . strtoupper(bin2hex(random_bytes(3)));
@@ -162,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             $stockHistoryStmt = $pdo->prepare("INSERT INTO stock_mouvements (magasin_id, produit_id, type, quantite, ancien_stock, nouveau_stock, motif, utilisateur_id, date_mouvement) VALUES (?, ?, 'sortie', ?, ?, ?, ?, ?, NOW())");
             foreach ($lines as [$productId, $name, $quantity, $price, $subtotal]) {
                 $lineStmt->execute([$orderId, $productId, $name, $quantity, $price, $subtotal]);
-                $oldStock = (int)$products[$productId]['quantite'];
+                $oldStock = (float)$products[$productId]['quantite'];
                 $stockStmt->execute([$quantity, $productId, $magasinId]);
                 if ($stockStmt->rowCount() !== 1) {
                     throw new RuntimeException('Le stock du magasin de retrait n\'a pas pu être mis à jour.');
@@ -180,10 +186,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             }
 
             $pdo->commit();
-            sendClientOrderEmail(['numero' => $number, 'code_retrait' => $pickupCode, 'client_email' => $old['email'], 'client_nom' => $old['nom']], 'En attente', getSettings());
             $_SESSION['client_cart'] = [];
-            $success = ['number' => $number, 'total' => $total, 'store' => $store['nom']];
-            $old = ['nom' => '', 'email' => ''];
+            $_SESSION['checkout_token'] = bin2hex(random_bytes(32));
+            $_SESSION['client_order_success'] = ['number' => $number, 'total' => $total, 'store' => $store['nom']];
+            try {
+                sendClientOrderEmail(['numero' => $number, 'code_retrait' => $pickupCode, 'client_email' => $old['email'], 'client_nom' => $old['nom']], 'En attente', $settings);
+            } catch (Throwable $mailError) {
+                error_log('Notification commande : ' . $mailError->getMessage());
+            }
+            header('Location: index.php', true, 303);
+            exit;
         } catch (Throwable $exception) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
@@ -213,6 +225,7 @@ $productStmt = $pdo->prepare($productSql);
 $productStmt->execute($productParams);
 $products = $productStmt->fetchAll();
 $stores = $pdo->query("SELECT id, nom, adresse, ville FROM magasins WHERE statut='actif' ORDER BY nom ASC")->fetchAll();
+$cartProducts = $pdo->query("SELECT p.id, p.nom, p.prix_vente, p.quantite, p.magasin_id FROM produits p JOIN magasins m ON m.id=p.magasin_id AND m.statut='actif'")->fetchAll();
 $cartCount = array_sum(array_map('intval', $_SESSION['client_cart']));
 
 function clientPhoto(array $product): string
@@ -232,11 +245,11 @@ function clientPhoto(array $product): string
     <style>
         body{background:#f6f7f2;color:#17221b}.hero{background:linear-gradient(120deg,#123b2a,#27704d 58%,#d4e65c);color:white}.product-image{height:220px;object-fit:cover}.product-placeholder{height:220px;background:#e5eadf}.cart-panel{max-height:calc(100vh - 2rem);overflow:auto;top:1rem;right:1rem;width:min(380px,calc(100vw - 2rem))}.cart-line{border:1px solid #e5e7eb}.cart-quantity button{height:2rem;width:2rem;border-radius:.6rem;background:#e7f1e8;font-weight:900;color:#14532d}.cart-quantity button:hover{background:#cde5d1}
     </style>
-<style>#cart-panel{display:none}.cart-panel.is-open{display:block}</style>
+<style>#cart-panel{display:none}#cart-panel.is-open{display:block}</style>
 </head>
 <body>
 <header class="hero">
-    <nav class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-5"><a href="index.php" class="flex items-center gap-3 text-2xl font-black"><?php if (!empty($settings['logo'])): ?><img src="<?= e($settings['logo']) ?>" alt="<?= e($settings['nom_boutique'] ?? 'Boutique') ?>" class="h-12 w-12 rounded-xl object-cover"><?php endif; ?><span><?= e($settings['nom_boutique'] ?? 'Boutique') ?></span></a><div class="flex flex-wrap items-center gap-4 text-sm font-bold"><a href="#fonctionnalites">Fonctionnalités</a><a href="#services">Services</a><a href="#faq">FAQ</a><?php if ($isClientLoggedIn): ?><a href="mes_commandes.php">Mes commandes</a><a href="logout.php">Déconnexion</a><?php else: ?><a href="inscription_client.php">Inscription</a><a href="login.php">Login</a><?php endif; ?><button type="button" onclick="toggleCart()" class="rounded-full bg-white px-5 py-3 font-bold text-green-950"><i class="fa-solid fa-bag-shopping mr-2"></i>Panier (<span id="cart-count"><?= $cartCount ?></span>)</button></div></nav>
+    <nav class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-5"><a href="index.php" class="flex items-center gap-3 text-2xl font-black"><?php if (!empty($settings['logo'])): ?><img src="<?= e($settings['logo']) ?>" alt="<?= e($settings['nom_boutique'] ?? 'Boutique') ?>" class="h-12 w-12 rounded-xl object-cover"><?php endif; ?><span><?= e($settings['nom_boutique'] ?? 'Boutique') ?></span></a><div class="flex flex-wrap items-center gap-4 text-sm font-bold"><a href="#fonctionnalites">Fonctionnalités</a><a href="#services">Services</a><a href="#faq">FAQ</a><?php if ($isClientLoggedIn): ?><span>Bonjour, <?= e($clientUser['nom']) ?></span><a href="mes_commandes.php">Mes commandes</a><a href="logout.php">Déconnexion</a><?php else: ?><a href="inscription_client.php">Inscription</a><a href="login.php">Login</a><?php endif; ?><button type="button" onclick="toggleCart()" class="rounded-full bg-white px-5 py-3 font-bold text-green-950"><i class="fa-solid fa-bag-shopping mr-2"></i>Panier (<span id="cart-count"><?= $cartCount ?></span>)</button></div></nav>
     <div class="mx-auto max-w-7xl px-5 pb-16 pt-10"><p class="mb-3 font-bold uppercase tracking-widest text-lime-200">Disponible près de chez vous</p><h1 class="max-w-3xl text-4xl font-black md:text-6xl">Les produits que vous aimez, simplement.</h1><p class="mt-5 max-w-xl text-lg text-green-50">Découvrez les produits les plus vendus et choisissez votre magasin de retrait.</p></div>
 </header>
 <main class="mx-auto max-w-7xl px-5 py-10">
@@ -253,60 +266,57 @@ function clientPhoto(array $product): string
     <?php if (!$products): ?><p class="rounded-2xl bg-white p-8 text-center">Aucun produit disponible dans cette catégorie.</p><?php endif; ?>
 </main>
 <div id="cart-overlay" onclick="toggleCart()" class="fixed inset-0 z-40 hidden bg-black/40"></div>
-<aside id="cart-panel" class="cart-panel fixed z-50 h-auto max-h-[calc(100vh-2rem)] bg-white p-6 shadow-2xl"><div class="flex items-center justify-between"><h2 class="text-2xl font-black"><i class="fa-solid fa-bag-shopping mr-2 text-green-700"></i>Votre panier</h2><button type="button" onclick="toggleCart()" class="text-2xl" aria-label="Fermer"><i class="fa-solid fa-xmark"></i></button></div><p class="mt-2 text-sm text-gray-500">Vérifiez les quantités puis choisissez votre magasin de retrait.</p><div id="cart-lines" class="my-6 space-y-3"></div><p class="flex justify-between border-t py-4 text-xl font-black"><span>Total</span><span id="cart-total">0</span></p><form method="post" class="space-y-3"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><input type="hidden" name="place_order" value="1"><?php if (!$isClientLoggedIn): ?><label class="block text-sm font-bold">Nom complet<input required name="nom" value="<?= e($old['nom']) ?>" class="mt-1 w-full rounded-xl border p-3"></label><label class="block text-sm font-bold">Email<input required type="email" name="email" value="<?= e($old['email']) ?>" class="mt-1 w-full rounded-xl border p-3"></label><label class="block text-sm font-bold">Mot de passe<input required type="password" name="password" minlength="6" class="mt-1 w-full rounded-xl border p-3"></label><?php else: ?><p class="rounded-xl bg-green-50 p-3 text-sm text-green-900">Commande pour <?= e($clientUser['nom']) ?></p><?php endif; ?><label class="block text-sm font-bold">Magasin de retrait<select required name="magasin_id" class="mt-1 w-full rounded-xl border p-3"><option value="">Choisir un magasin</option><?php foreach ($stores as $store): ?><option value="<?= (int)$store['id'] ?>"><?= e($store['nom']) ?><?= $store['ville'] ? ' - '.e($store['ville']) : '' ?></option><?php endforeach; ?></select></label><input type="hidden" id="cart-input" name="cart" value=""><button class="w-full rounded-2xl bg-lime-500 p-4 font-black text-green-950"><i class="fa-solid fa-check mr-2"></i><?= $isClientLoggedIn ? 'Valider ma commande' : 'Créer mon compte et commander' ?></button></form></aside>
+<aside id="cart-panel" class="cart-panel fixed z-50 h-auto max-h-[calc(100vh-2rem)] bg-white p-6 shadow-2xl"><div class="flex items-center justify-between"><h2 class="text-2xl font-black"><i class="fa-solid fa-bag-shopping mr-2 text-green-700"></i>Votre panier</h2><button type="button" onclick="toggleCart()" class="text-2xl" aria-label="Fermer"><i class="fa-solid fa-xmark"></i></button></div><p class="mt-2 text-sm text-gray-500">Vérifiez les quantités puis choisissez votre magasin de retrait.</p><div id="cart-lines" class="my-6 space-y-3"></div><p class="flex justify-between border-t py-4 text-xl font-black"><span>Total</span><span id="cart-total">0</span></p><form method="post" class="space-y-3"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><input type="hidden" name="place_order" value="1"><input type="hidden" name="checkout_token" value="<?= e($_SESSION['checkout_token']) ?>"><?php if (!$isClientLoggedIn): ?><p class="rounded-xl bg-green-50 p-3">Votre panier est conservé sur cet appareil. <a class="font-bold" href="login.php">Se connecter</a> ou <a class="font-bold" href="inscription_client.php">Créer mon compte</a> pour commander.</p><?php else: ?><p class="rounded-xl bg-green-50 p-3 text-sm text-green-900">Commande pour <?= e($clientUser['nom']) ?></p><?php endif; ?><label class="block text-sm font-bold">Magasin de retrait<select required name="magasin_id" class="mt-1 w-full rounded-xl border p-3"><option value="">Choisir un magasin</option><?php foreach ($stores as $store): ?><option value="<?= (int)$store['id'] ?>" <?= $magasinId === (int)$store['id'] ? 'selected' : '' ?>><?= e($store['nom']) ?><?= $store['ville'] ? ' - '.e($store['ville']) : '' ?></option><?php endforeach; ?></select></label><fieldset class="rounded-xl border p-3"><legend>Moyen de paiement</legend><?php foreach (['Paiement à la caisse', 'Paiement au retrait'] as $method): ?><label class="block py-2"><input required type="radio" name="mode_paiement" value="<?= e($method) ?>" <?= $paymentMethod === $method ? 'checked' : '' ?>> <?= e($method) ?></label><?php endforeach; ?></fieldset><input type="hidden" id="cart-input" name="cart" value=""><button id="submit-order" type="submit" <?= !$isClientLoggedIn ? 'disabled' : '' ?> class="w-full rounded-2xl bg-lime-500 p-4 font-black text-green-950"><i class="fa-solid fa-check mr-2"></i><?= $isClientLoggedIn ? 'Valider ma commande' : 'Connexion requise pour commander' ?></button></form></aside>
 <script>
-const products = <?= json_encode(array_column($products, null, 'id'), JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP) ?>;
+const products = <?= json_encode(array_column($cartProducts, null, 'id'), JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP) ?>;
 const serverCart = <?= json_encode($_SESSION['client_cart']) ?>;
-let cart = serverCart;
-<?php if ($success): ?>
-localStorage.removeItem('client_cart');
-<?php else: ?>
+let cart = {};
 try {
-    if (Object.keys(cart).length === 0) {
-        const savedCart = JSON.parse(localStorage.getItem('client_cart') || '{}');
-        if (savedCart && typeof savedCart === 'object') {
-            cart = savedCart;
-        }
-    }
-} catch (error) {
-    localStorage.removeItem('client_cart');
+    const saved = JSON.parse(localStorage.getItem('client_cart') || '{}');
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) cart = saved;
+} catch (error) {}
+<?php if ($success): ?>cart = {};<?php endif; ?>
+if (Object.keys(serverCart).length) cart = serverCart;
+Object.entries(cart).forEach(([id, qty]) => {
+    const product = products[id];
+    const quantity = Math.min(999, Math.floor(Number(qty)), Math.floor(Number(product?.quantite || 0)));
+    if (!/^[1-9][0-9]*$/.test(id) || !product || !Number.isFinite(quantity) || quantity < 1) delete cart[id];
+    else cart[id] = quantity;
+});
+function saveCart(){
+    document.getElementById('cart-input').value = JSON.stringify(cart);
+    try { localStorage.setItem('client_cart', JSON.stringify(cart)); } catch (error) {}
 }
-<?php endif; ?>
-function saveCart(){ document.getElementById('cart-input').value = JSON.stringify(cart); localStorage.setItem('client_cart', JSON.stringify(cart)); }
-function addToCart(id){ cart[id] = Math.min((cart[id] || 0) + 1, Number(products[id].quantite)); renderCart(); toggleCart(true); }
-function changeQty(id, amount){ cart[id] = Math.max(0, Math.min((cart[id] || 0) + amount, Number(products[id].quantite))); if (!cart[id]) delete cart[id]; renderCart(); }
+function addToCart(id){
+    const ids = Object.keys(cart);
+    if (ids.length && Number(products[ids[0]].magasin_id) !== Number(products[id].magasin_id)) {
+        alert('Choisissez les produits d’un seul magasin par commande.'); return;
+    }
+    const quantity = Math.min((cart[id] || 0) + 1, 999, Math.floor(Number(products[id].quantite)));
+    if (quantity < 1) return;
+    cart[id] = quantity;
+    document.querySelector('[name="magasin_id"]').value = products[id].magasin_id;
+    renderCart(); toggleCart(true);
+}
+function changeQty(id, amount){ cart[id] = Math.max(0, Math.min((cart[id] || 0) + amount, 999, Math.floor(Number(products[id].quantite)))); if (!cart[id]) delete cart[id]; renderCart(); }
 function toggleCart(force){ const panel=document.getElementById('cart-panel'), overlay=document.getElementById('cart-overlay'); const open=force === true ? true : !panel.classList.contains('is-open'); panel.classList.toggle('is-open', open); panel.classList.toggle('hidden', !open); overlay.classList.toggle('hidden', !open); }
 function renderCart(){ let total=0,count=0,html=''; Object.entries(cart).forEach(([id,qty])=>{const p=products[id]; if(!p)return; const line=Number(p.prix_vente)*qty; total+=line;count+=qty;html+=`<div class="cart-line rounded-xl bg-gray-50 p-3"><div class="flex items-start justify-between gap-3"><strong>${escapeHtml(p.nom)}</strong><button type="button" onclick="changeQty(${id},-${qty})" class="text-red-600" aria-label="Supprimer"><i class="fa-solid fa-trash"></i></button></div><div class="mt-3 flex items-center justify-between"><span class="text-sm text-gray-500">${Number(p.prix_vente).toFixed(2)} × ${qty}</span><span class="cart-quantity flex gap-2"><button type="button" onclick="changeQty(${id},-1)" aria-label="Diminuer">−</button><span class="flex min-w-8 items-center justify-center font-bold">${qty}</span><button type="button" onclick="changeQty(${id},1)" aria-label="Augmenter">+</button></span></div></div>`}); document.getElementById('cart-lines').innerHTML=html || '<p class="rounded-xl bg-gray-50 p-4 text-gray-500">Votre panier est vide.</p>';document.getElementById('cart-total').textContent=total.toFixed(2);document.getElementById('cart-count').textContent=count;saveCart();}
 function escapeHtml(value){const div=document.createElement('div');div.textContent=value;return div.innerHTML;} renderCart();
 </script>
 <script>
 const orderForm = document.querySelector('#cart-panel form[method="post"]');
-const orderButton = orderForm ? orderForm.querySelector('button') : null;
-if (orderForm && orderButton) {
-    const paymentBox = document.createElement('fieldset');
-    paymentBox.className = 'space-y-3 rounded-xl border border-green-100 bg-green-50 p-4';
-    paymentBox.innerHTML = '<legend class="px-1 text-sm font-bold text-green-950">Moyen de paiement</legend>'
-        + '<label class="flex cursor-pointer gap-3 rounded-xl bg-white p-3 ring-1 ring-green-100"><input type="radio" name="payment_choice" value="Paiement à la caisse" class="mt-1" required><span><strong class="block text-sm">Paiement à la caisse directement</strong><small class="text-gray-600">Réglez votre commande à la caisse du magasin choisi.</small></span></label>'
-        + '<label class="flex cursor-pointer gap-3 rounded-xl bg-white p-3 ring-1 ring-green-100"><input type="radio" name="payment_choice" value="Paiement au retrait" class="mt-1"><span><strong class="block text-sm">Paiement au retrait de la commande</strong><small class="text-gray-600">Réglez lorsque vous récupérez votre commande dans le magasin choisi.</small></span></label>'
-        + '<div class="hidden" aria-hidden="true"><span>Carte bancaire, Mobile Money et autres moyens de paiement seront proposés ultérieurement.</span><input type="radio" name="payment_choice" value="Carte bancaire"><input type="radio" name="payment_choice" value="Mobile Money"></div>';
-    const paymentInput = document.createElement('input');
-    paymentInput.type = 'hidden';
-    paymentInput.name = 'mode_paiement';
-    orderForm.insertBefore(paymentBox, orderForm.firstChild);
-    orderForm.appendChild(paymentInput);
+const orderButton = document.getElementById('submit-order');
+orderForm.addEventListener('submit', (event) => {
+    saveCart();
+    if (!Object.keys(cart).length) {
+        event.preventDefault();
+        alert('Votre panier est vide.');
+        return;
+    }
     orderButton.disabled = true;
-    orderButton.classList.add('opacity-50', 'cursor-not-allowed');
-    paymentBox.querySelectorAll('input[name="payment_choice"]').forEach((choice) => {
-        choice.addEventListener('change', () => {
-            const available = choice.value === 'Paiement à la caisse' || choice.value === 'Paiement au retrait';
-            paymentInput.value = available ? choice.value : '';
-            orderButton.disabled = !available;
-            orderButton.classList.toggle('opacity-50', !available);
-            orderButton.classList.toggle('cursor-not-allowed', !available);
-            orderButton.classList.toggle('hidden', !available);
-        });
-    });
-}
+    orderButton.textContent = 'Enregistrement en cours…';
+});
+<?php if ($errors): ?>toggleCart(true);<?php endif; ?>
 </script>
 <?php include __DIR__ . '/includes/footer.php'; ?>
 </body>

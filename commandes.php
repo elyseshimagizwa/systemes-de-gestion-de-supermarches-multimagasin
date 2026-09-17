@@ -3,6 +3,7 @@
 
 require_once 'config.php';
 require_once __DIR__ . '/includes/supplier-orders.php';
+require_once __DIR__ . '/includes/stock-quantities.php';
 
 requireLogin();
 requireCaissier();
@@ -83,7 +84,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         ========================== */
         foreach ($_POST['produit_id'] as $i => $pid) {
 
-            $qte = (int)$_POST['quantite'][$i];
+            if (!$pid) {
+                continue;
+            }
+            $qte = stockQuantity($_POST['quantite'][$i] ?? null);
+            if ($qte <= 0) {
+                throw new Exception('La quantité commandée doit être supérieure à zéro.');
+            }
 
             if ($pid && $qte > 0) {
 
@@ -281,8 +288,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['enregistrer_reception
             if ($recu > 0) {
                 $stockStmt = $pdo->prepare('SELECT quantite FROM produits WHERE id=? AND magasin_id=? FOR UPDATE');
                 $stockStmt->execute([(int)$line['produit_id'], (int)currentMagasinId()]);
-                $ancien = (int)$stockStmt->fetchColumn();
-                $nouveau = $ancien + $recu;
+                $stockExistant = $stockStmt->fetchColumn();
+                if ($stockExistant === false) {
+                    throw new Exception('Produit introuvable dans le magasin de réception');
+                }
+                $ancien = round((float)$stockExistant, 3);
+                $nouveau = round($ancien + $recu, 3);
                 $pdo->prepare('UPDATE produits SET quantite=? WHERE id=? AND magasin_id=?')->execute([$nouveau, (int)$line['produit_id'], (int)currentMagasinId()]);
                 $pdo->prepare('INSERT INTO lots_produits (produit_id, magasin_id, numero_lot, quantite_initiale, quantite_restante, prix_achat, date_expiration) SELECT id, ?, ?, ?, ?, ?, date_peremption FROM produits WHERE id=? AND magasin_id=?')->execute([(int)currentMagasinId(), $numeroBon . '-' . $line['produit_id'], $recu, $recu, $prixRecu, (int)$line['produit_id'], (int)currentMagasinId()]);
                 $pdo->prepare('INSERT INTO stock_mouvements (produit_id, magasin_id, type, quantite, ancien_stock, nouveau_stock, motif, utilisateur_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([(int)$line['produit_id'], (int)currentMagasinId(), 'entree_commande', $recu, $ancien, $nouveau, 'Réception ' . $numeroBon, (int)$user['id']]);
@@ -708,6 +719,8 @@ include 'includes/sidebar.php';
     <input
         type="number"
         name="quantite[]"
+        min="0.001"
+        step="0.001"
         placeholder="Quantité"
         class="border p-3 rounded-xl w-full"
     >
