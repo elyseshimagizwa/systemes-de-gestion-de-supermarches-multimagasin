@@ -260,7 +260,7 @@ if (
                 secureInt($it['id'] ?? 0);
 
             $qty =
-                secureInt($it['qty'] ?? 0);
+                round((float)($it['qty'] ?? 0), 3);
 
             if (
                 $produit_id <= 0
@@ -286,7 +286,9 @@ if (
                     nom,
                     prix_vente,
                     quantite,
-                    magasin_id
+                    magasin_id,
+                    unite_mesure,
+                    mode_vente
                 FROM produits
                 WHERE id=?
                 AND magasin_id=?
@@ -310,7 +312,7 @@ if (
             }
 
             $stock =
-                secureInt($p['quantite']);
+                round((float)$p['quantite'], 3);
 
             if ($stock < $qty) {
 
@@ -491,6 +493,14 @@ if (
 
                 $item['sous_total']
             ]);
+
+            consumeProductLots(
+                $pdo,
+                (int)$item['id'],
+                $magasin_id,
+                (float)$item['qty'],
+                (int)$pdo->lastInsertId()
+            );
 
             $stockHistory =
                 $pdo->prepare("
@@ -713,6 +723,8 @@ if (
             prix_vente,
             quantite,
             codebarre,
+            unite_mesure,
+            mode_vente,
             photos
         FROM produits
         WHERE quantite > 0
@@ -1722,7 +1734,7 @@ function addItem(p){
             return;
         }
 
-        found.qty++;
+        found.qty = Math.min(found.quantite, +(found.qty + found.step).toFixed(3));
 
     }else{
 
@@ -1731,8 +1743,10 @@ function addItem(p){
             id:p.id,
             nom:p.nom,
             prix_vente:parseFloat(p.prix_vente),
-            quantite:parseInt(p.quantite),
+            quantite:parseFloat(p.quantite),
             qty:1,
+            step:(p.mode_vente === 'unite' ? 1 : 0.001),
+            unite_mesure:p.unite_mesure || 'piece',
             codebarre:p.codebarre,
             image:productImage(p)
         });
@@ -1764,7 +1778,7 @@ function increaseQty(index){
         return;
     }
 
-    cart[index].qty++;
+    cart[index].qty = Math.min(cart[index].quantite, +(cart[index].qty + cart[index].step).toFixed(3));
 
     render();
 }
@@ -1784,6 +1798,16 @@ function decreaseQty(index){
         cart.splice(index,1);
     }
 
+    render();
+}
+
+function setQty(index, value){
+    const quantity = parseFloat(value);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+        cart.splice(index, 1);
+    } else {
+        cart[index].qty = Math.min(cart[index].quantite, +quantity.toFixed(3));
+    }
     render();
 }
 
@@ -1928,11 +1952,15 @@ function render(){
 
                         </button>
 
-                        <div class="px-4 py-2 bg-gray-100 rounded-xl font-bold">
-
-                            ${i.qty}
-
-                        </div>
+                        <input
+                            type="number"
+                            min="0.001"
+                            max="${i.quantite}"
+                            step="${i.step}"
+                            value="${i.qty}"
+                            onchange="setQty(${index}, this.value)"
+                            class="w-24 rounded-xl bg-gray-100 px-3 py-2 text-center font-bold"
+                        >
 
                         <button
                             type="button"

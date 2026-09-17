@@ -234,9 +234,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['expedier'])) {
 }
 
 /* =========================
-   RECEPTIONNER COMMANDE
+   ENREGISTRER UNE RECEPTION
 ========================= */
-if (isset($_GET['recevoir'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['enregistrer_reception'])) {
+    verify_csrf();
+    $id = (int)$_POST['commande_id'];
+    $pdo->beginTransaction();
+
+    try {
+        $commandeStmt = $pdo->prepare('SELECT id FROM commandes WHERE id=? AND magasin_id=? FOR UPDATE');
+        $commandeStmt->execute([$id, (int)currentMagasinId()]);
+        if (!$commandeStmt->fetch()) {
+            throw new Exception('Commande introuvable ou magasin non autorisé');
+        }
+        $linesStmt = $pdo->prepare('SELECT lc.*, COALESCE((SELECT SUM(lr.quantite_recue + lr.quantite_endommagee + lr.quantite_manquante) FROM lignes_receptions_fournisseurs lr JOIN receptions_fournisseurs r ON r.id=lr.reception_id WHERE lr.ligne_commande_id=lc.id AND r.commande_id=?), 0) AS deja_traite FROM ligne_commandes lc WHERE lc.commande_id=? FOR UPDATE');
+        $linesStmt->execute([$id, $id]);
+        $lines = $linesStmt->fetchAll();
+        if (!$lines) {
+            throw new Exception('Cette commande ne contient aucune ligne');
+        }
+
+        $numeroBon = 'BR-' . date('YmdHis') . '-' . random_int(100, 999);
+        $receptionStmt = $pdo->prepare('INSERT INTO receptions_fournisseurs (commande_id, magasin_id, utilisateur_id, numero_bon, commentaire) VALUES (?, ?, ?, ?, ?)');
+        $receptionStmt->execute([$id, (int)currentMagasinId(), (int)$user['id'], $numeroBon, trim($_POST['commentaire'] ?? '') ?: null]);
+        $receptionId = (int)$pdo->lastInsertId();
+        $lineReception = $pdo->prepare('INSERT INTO lignes_receptions_fournisseurs (reception_id, ligne_commande_id, quantite_recue, quantite_endommagee, quantite_manquante, prix_prevu, prix_recu) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        $totalTraite = 0;
+        $totalCommande = 0;
+        $totalReception = 0;
+
+        foreach ($lines as $line) {
+            $lineId = (int)$line['id'];
+            $restant = max(0, (float)$line['quantite'] - (float)$line['deja_traite']);
+            $recu = max(0, (float)($_POST['recu'][$lineId] ?? 0));
+            $endommage = max(0, (float)($_POST['endommage'][$lineId] ?? 0));
+            $manquant = max(0, (float)($_POST['manquant'][$lineId] ?? 0));
+            $prixRecu = max(0, (float)($_POST['prix_recu'][$lineId] ?? $line['prix_achat']));
+            if ($recu + $endommage + $manquant > $restant) {
+                throw new Exception('Les quantités dépassent le restant de la commande');
+            }
+            $lineReception->execute([$receptionId, $lineId, $recu, $endommage, $manquant, $line['prix_achat'], $prixRecu]);
+            $totalReception += $recu + $endommage + $manquant;
+            $totalTraite += (float)$line['deja_traite'] + $recu + $endommage + $manquant;
+            $totalCommande += (float)$line['quantite'];
+
+            if ($recu > 0) {
+                $stockStmt = $pdo->prepare('SELECT quantite FROM produits WHERE id=? AND magasin_id=? FOR UPDATE');
+                $stockStmt->execute([(int)$line['produit_id'], (int)currentMagasinId()]);
+                $ancien = (int)$stockStmt->fetchColumn();
+                $nouveau = $ancien + $recu;
+                $pdo->prepare('UPDATE produits SET quantite=? WHERE id=? AND magasin_id=?')->execute([$nouveau, (int)$line['produit_id'], (int)currentMagasinId()]);
+                $pdo->prepare('INSERT INTO lots_produits (produit_id, magasin_id, numero_lot, quantite_initiale, quantite_restante, prix_achat, date_expiration) SELECT id, ?, ?, ?, ?, ?, date_peremption FROM produits WHERE id=? AND magasin_id=?')->execute([(int)currentMagasinId(), $numeroBon . '-' . $line['produit_id'], $recu, $recu, $prixRecu, (int)$line['produit_id'], (int)currentMagasinId()]);
+                $pdo->prepare('INSERT INTO stock_mouvements (produit_id, magasin_id, type, quantite, ancien_stock, nouveau_stock, motif, utilisateur_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([(int)$line['produit_id'], (int)currentMagasinId(), 'entree_commande', $recu, $ancien, $nouveau, 'Réception ' . $numeroBon, (int)$user['id']]);
+            }
+        }
+
+        if ($totalReception <= 0) {
+            throw new Exception('Saisissez au moins une quantité reçue, manquante ou endommagée');
+        }
+
+        $statut = ($totalTraite >= $totalCommande) ? 'Reçue totalement' : 'Reçue partiellement';
+        $fournisseurStatut = ($statut === 'Reçue totalement') ? 'Livrée' : 'Expédiée';
+        $pdo->prepare('UPDATE commandes SET statut=?, fournisseur_statut=?, date_livraison=IF(?="Reçue totalement", NOW(), date_livraison) WHERE id=?')->execute([$statut, $fournisseurStatut, $statut, $id]);
+        $pdo->prepare('INSERT INTO historiques (utilisateur_id, magasin_id, action, details, ip, niveau, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())')->execute([(int)$user['id'], (int)currentMagasinId(), 'RECEPTION COMMANDE', 'Bon ' . $numeroBon . ' pour la commande #' . $id, $_SERVER['REMOTE_ADDR'], 'info']);
+        $pdo->commit();
+        header('Location: bon_reception.php?id=' . $receptionId);
+        exit;
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        flash('error', 'Erreur réception : ' . $e->getMessage());
+        header('Location: commandes.php?recevoir=' . $id);
+        exit;
+    }
+}
+
+/* Ancien flux GET conservé désactivé pour empêcher une modification par lien. */
+if (isset($_GET['recevoir']) && false) {
 
     $id = (int)$_GET['recevoir'];
 
@@ -300,6 +375,17 @@ if (isset($_GET['recevoir'])) {
 
                 $it['produit_id'],
                 currentMagasinId()
+            ]);
+
+            $lot = $pdo->prepare('INSERT INTO lots_produits (produit_id, magasin_id, numero_lot, quantite_initiale, quantite_restante, prix_achat, date_expiration) SELECT id, ?, ?, ?, ?, ?, date_peremption FROM produits WHERE id=? AND magasin_id=?');
+            $lot->execute([
+                currentMagasinId(),
+                'CMD-' . $id . '-' . $it['produit_id'],
+                (float)$it['quantite'],
+                (float)$it['quantite'],
+                (float)$it['prix_achat'],
+                (int)$it['produit_id'],
+                currentMagasinId(),
             ]);
 
             /* =========================
@@ -441,6 +527,19 @@ $list = $pdo->query("
     ORDER BY c.id DESC
 ")->fetchAll();
 
+$receptionCommande = null;
+$receptionLines = [];
+if (isset($_GET['recevoir'])) {
+    $receptionCommandeStmt = $pdo->prepare('SELECT c.id, c.statut, f.nom AS fournisseur FROM commandes c JOIN fournisseurs f ON f.id=c.fournisseur_id WHERE c.id=? AND c.magasin_id=?');
+    $receptionCommandeStmt->execute([(int)$_GET['recevoir'], (int)currentMagasinId()]);
+    $receptionCommande = $receptionCommandeStmt->fetch();
+    if ($receptionCommande) {
+        $receptionLinesStmt = $pdo->prepare('SELECT lc.*, p.nom AS produit_nom, COALESCE((SELECT SUM(lr.quantite_recue + lr.quantite_endommagee + lr.quantite_manquante) FROM lignes_receptions_fournisseurs lr JOIN receptions_fournisseurs r ON r.id=lr.reception_id WHERE lr.ligne_commande_id=lc.id), 0) AS deja_traite FROM ligne_commandes lc JOIN produits p ON p.id=lc.produit_id WHERE lc.commande_id=? ORDER BY lc.id');
+        $receptionLinesStmt->execute([(int)$receptionCommande['id']]);
+        $receptionLines = $receptionLinesStmt->fetchAll();
+    }
+}
+
 /* =========================
    INCLUDES
 ========================= */
@@ -450,6 +549,41 @@ include 'includes/sidebar.php';
 ?>
 
 <div class="p-4 md:p-6">
+
+<?php if ($receptionCommande && $receptionLines): ?>
+<div class="bg-white dark:bg-slate-800 rounded-2xl shadow p-5 mb-6">
+    <h2 class="text-xl font-bold mb-1">Réception de la commande #<?= (int)$receptionCommande['id'] ?></h2>
+    <p class="text-gray-500 mb-4">Fournisseur : <?= e($receptionCommande['fournisseur']) ?>. Les quantités endommagées ou manquantes ne sont pas ajoutées au stock.</p>
+    <form method="post" class="space-y-4">
+        <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
+        <input type="hidden" name="enregistrer_reception" value="1">
+        <input type="hidden" name="commande_id" value="<?= (int)$receptionCommande['id'] ?>">
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+                <thead><tr class="border-b"><th class="p-2 text-left">Produit</th><th class="p-2">Commandé</th><th class="p-2">Restant</th><th class="p-2">Reçu</th><th class="p-2">Endommagé</th><th class="p-2">Manquant</th><th class="p-2">Prix prévu</th><th class="p-2">Prix reçu</th></tr></thead>
+                <tbody>
+                <?php foreach ($receptionLines as $line): $remaining = max(0, (float)$line['quantite'] - (float)$line['deja_traite']); ?>
+                    <tr class="border-b">
+                        <td class="p-2"><?= e($line['produit_nom']) ?></td>
+                        <td class="p-2 text-center"><?= e($line['quantite']) ?></td>
+                        <td class="p-2 text-center font-semibold"><?= e($remaining) ?></td>
+                        <td class="p-2"><input class="border rounded p-2 w-24" type="number" min="0" max="<?= e($remaining) ?>" step="0.001" name="recu[<?= (int)$line['id'] ?>]" value="0"></td>
+                        <td class="p-2"><input class="border rounded p-2 w-24" type="number" min="0" max="<?= e($remaining) ?>" step="0.001" name="endommage[<?= (int)$line['id'] ?>]" value="0"></td>
+                        <td class="p-2"><input class="border rounded p-2 w-24" type="number" min="0" max="<?= e($remaining) ?>" step="0.001" name="manquant[<?= (int)$line['id'] ?>]" value="0"></td>
+                        <td class="p-2 text-center"><?= e(number_format((float)$line['prix_achat'], 2, ',', ' ')) ?></td>
+                        <td class="p-2"><input class="border rounded p-2 w-28" type="number" min="0" step="0.01" name="prix_recu[<?= (int)$line['id'] ?>]" value="<?= e($line['prix_achat']) ?>"></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <textarea name="commentaire" class="border rounded-xl p-3 w-full" rows="2" placeholder="Commentaire de réception (facultatif)"></textarea>
+        <div class="flex gap-3"><button class="bg-green-600 hover:bg-green-700 text-white rounded-xl px-4 py-3" type="submit">Enregistrer la réception</button><a class="border rounded-xl px-4 py-3" href="commandes.php">Annuler</a></div>
+    </form>
+</div>
+<?php elseif (isset($_GET['recevoir'])): ?>
+<div class="bg-red-100 text-red-700 p-3 rounded-xl mb-4">Commande introuvable ou inaccessible.</div>
+<?php endif; ?>
 
 <!-- HEADER -->
 <div class="flex justify-between items-center mb-6">
@@ -662,6 +796,8 @@ include 'includes/sidebar.php';
 
             </span>
 
+        <?php elseif($c['statut']=='Reçue partiellement'): ?>
+            <span class="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-xs">↗ Reçue partiellement</span>
         <?php else: ?>
 
             <span class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-xs">
@@ -705,12 +841,11 @@ include 'includes/sidebar.php';
 
         <a
             href="?recevoir=<?= $c['id'] ?>"
-            onclick="return confirm('Réceptionner cette commande ?')"
             class="bg-green-600 hover:bg-green-700
                    text-white px-4 py-2 rounded-xl text-sm"
         >
 
-            ✅ Réceptionner
+            ✅ Réceptionner / réception partielle
 
         </a>
 
@@ -718,7 +853,7 @@ include 'includes/sidebar.php';
 
         <span class="text-green-600 font-semibold">
 
-            Terminée
+            Terminée · <a class="underline" href="bon_reception.php?commande_id=<?= (int)$c['id'] ?>">Voir les bons</a>
 
         </span>
 

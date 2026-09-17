@@ -265,6 +265,14 @@ $tva
                 $item['sous_total']
             ]);
 
+            consumeProductLots(
+                $pdo,
+                (int)$item['id'],
+                $currentMagasinId,
+                (float)$item['qty'],
+                (int)$pdo->lastInsertId()
+            );
+
             $update = $pdo->prepare("
               UPDATE produits
 

@@ -313,6 +313,9 @@ foreach ($lignes as $ligne) {
 
     ]);
 
+    $lot = $pdo->prepare('INSERT INTO lots_produits (produit_id, magasin_id, numero_lot, quantite_initiale, quantite_restante, prix_achat, date_expiration) SELECT id, ?, ?, ?, ?, prix_achat, date_peremption FROM produits WHERE id=? AND magasin_id=?');
+    $lot->execute([(int)$vente['magasin_id'], 'ANNULATION-' . $vente_id . '-' . $ligne['produit_id'], (float)$ligne['quantite'], (float)$ligne['quantite'], (int)$ligne['produit_id'], (int)$vente['magasin_id']]);
+
 }
 
 /*==================================================

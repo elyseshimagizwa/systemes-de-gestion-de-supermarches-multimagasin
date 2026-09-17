@@ -282,6 +282,8 @@ if(
                 $produit_id
             ]);
 
+            consumeProductLots($pdo, $produit_id, $source_id, (float)$quantite);
+
             /* =============================================
                DESTINATION
             ============================================= */
@@ -385,6 +387,17 @@ if(
 
                 $stockDestinationApres,
                 $produit_destination_id
+            ]);
+
+            $lotDestination = $pdo->prepare('INSERT INTO lots_produits (produit_id, magasin_id, numero_lot, quantite_initiale, quantite_restante, prix_achat, date_expiration) VALUES (?, ?, ?, ?, ?, ?, ?)');
+            $lotDestination->execute([
+                (int)$produit_destination_id,
+                $destination_id,
+                'TRF-' . $reference . '-' . $produit_id,
+                (float)$quantite,
+                (float)$quantite,
+                (float)$produitSource['prix_achat'],
+                $produitSource['date_peremption'],
             ]);
 
             /* =============================================

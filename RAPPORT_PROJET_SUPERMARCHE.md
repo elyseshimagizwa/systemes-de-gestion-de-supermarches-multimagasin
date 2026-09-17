@@ -758,8 +758,13 @@ Pour présenter le projet, suivre cet ordre :
 11. Fermer la caisse et afficher l'écart.
 12. Revenir comme administrateur et valider la fermeture.
 13. Montrer un transfert entre deux magasins.
-14. Afficher les rapports et historiques filtrés.
-15. Présenter l'espace client et une commande en ligne.
+14. Afficher les mouvements de stock avec ancien et nouveau stock.
+15. Afficher les rapports financiers, la TVA, les bénéfices et les graphiques.
+16. Afficher le CA de caisse du jour par magasin et la meilleure vente.
+17. Afficher l'historique global des connexions, modifications, suppressions et actions de sécurité.
+18. Présenter l'espace client, choisir un magasin de retrait et passer une commande.
+19. Choisir le paiement à la caisse ou le paiement au retrait.
+20. Vérifier que la commande utilise le stock du magasin de retrait.
 
 ## 12. Texte prêt pour une présentation orale
 
@@ -826,6 +831,273 @@ Pour une version professionnelle complète, les améliorations suivantes sont re
 - mettre en place des sauvegardes chiffrées et testées;
 - prévoir une synchronisation si les magasins doivent fonctionner sans connexion réseau.
 
-## 15. Résumé en une phrase
+## 15. Fonctionnalités transversales du système
 
-**Le projet est une plateforme web centralisée qui permet à un supermarché multi-magasins de gérer ses utilisateurs, ventes, caisses, stocks, achats, transferts, finances, rapports et commandes clients, avec une séparation des accès entre l'administrateur et le caissier.**
+Cette section récapitule les fonctionnalités présentes dans l'application et leur rôle dans le fonctionnement global.
+
+### 15.1 Séparation stricte entre magasins
+
+Le magasin est une dimension obligatoire de la plupart des opérations. Les produits, catégories, fournisseurs, utilisateurs, ventes, caisses, mouvements de stock, transactions, rapports et commandes clients sont rattachés à un magasin.
+
+Le système applique les règles suivantes :
+
+- un caissier ne consulte que son magasin d'affectation;
+- un administrateur peut consulter tous les magasins ou sélectionner un magasin;
+- les produits du magasin A ne peuvent pas être vendus ou déstockés dans le magasin B;
+- une commande client déstocke le magasin de retrait choisi par le client;
+- une annulation ou un retour remet le stock dans le magasin d'origine;
+- les transferts possèdent un magasin source et un magasin destination;
+- les rapports et historiques peuvent être filtrés par magasin.
+
+### 15.2 Catalogue et vente directe
+
+Le catalogue interne permet de rechercher un produit par nom, code-barres ou catégorie. Le caissier peut scanner un article, gérer les quantités du panier, contrôler le stock, appliquer la TVA configurée et choisir le moyen de paiement.
+
+Les ventes enregistrent notamment :
+
+- le magasin;
+- la session de caisse;
+- le caissier;
+- le total;
+- le montant reçu;
+- la monnaie;
+- le mode de paiement;
+- la TVA;
+- la date et les lignes de vente.
+
+Le stock est diminué dans une transaction protégée par verrouillage du produit. Un mouvement de sortie est également enregistré avec l'ancien stock, le nouveau stock, la quantité, le magasin et l'utilisateur.
+
+### 15.3 Commandes clients et retrait en magasin
+
+La boutique en ligne propose un catalogue séparé de l'espace interne. Le client peut :
+
+- rechercher et filtrer les produits;
+- consulter la quantité disponible;
+- ajouter des produits au panier;
+- choisir un magasin de retrait;
+- créer un compte ou se connecter;
+- choisir `Paiement à la caisse` ou `Paiement au retrait`;
+- recevoir un numéro de commande et un code de retrait;
+- suivre le statut de sa commande.
+
+Le stock est vérifié dans le magasin de retrait sélectionné. La commande, ses lignes et les mouvements de stock utilisent le même `magasin_id`, ce qui évite de déstocker une autre agence.
+
+Les statuts client prévus sont :
+
+`En attente`, `Confirmée`, `En préparation`, `Préparée`, `Prête`, `Récupérée`, `Annulée`, `Refusée` et `Expirée`.
+
+Les moyens de paiement en ligne comme la carte bancaire ou le Mobile Money sont préparés dans l'interface mais restent indisponibles tant qu'une passerelle de paiement n'est pas intégrée. Le système ne les accepte pas côté serveur.
+
+### 15.4 Stock et traçabilité
+
+Chaque variation de quantité peut être enregistrée dans `stock_mouvements`. Les actions suivies comprennent :
+
+- entrée de stock;
+- entrée liée à une commande fournisseur;
+- sortie manuelle;
+- sortie de vente;
+- perte;
+- retour client;
+- transfert entrant;
+- transfert sortant;
+- correction d'inventaire;
+- ajout ou modification d'un stock produit;
+- nettoyage des produits périmés.
+
+Les pages de mouvements et d'historique produit affichent le magasin, le produit, le type d'action, la quantité, l'ancien stock, le nouveau stock, le motif, l'utilisateur et la date. Un résumé par produit présente aussi le stock au début de l'historique, les entrées, les sorties et le stock restant.
+
+### 15.5 Achats et fournisseurs
+
+Le module fournisseur couvre le cycle suivant :
+
+1. création ou sélection d'un fournisseur;
+2. création d'une commande fournisseur;
+3. ajout des produits, quantités et prix d'achat;
+4. envoi ou partage du bon de commande;
+5. suivi de la commande;
+6. réception de la marchandise;
+7. augmentation du stock du magasin concerné;
+8. conservation des données de prix d'achat pour l'analyse de marge.
+
+Le portail fournisseur peut afficher une commande à partir d'un jeton sécurisé et permettre son acceptation ou son suivi.
+
+### 15.6 Transferts entre magasins
+
+Les transferts permettent de déplacer une quantité d'un magasin source vers un magasin destination. Une référence de transfert est générée et le système conserve :
+
+- les deux magasins;
+- les produits et quantités;
+- l'utilisateur demandeur;
+- le réceptionnaire;
+- le statut;
+- les dates de création et de réception;
+- le motif et les commentaires.
+
+Les mouvements de sortie et d'entrée sont enregistrés séparément afin de suivre le stock de chaque magasin.
+
+### 15.7 Finances et contrôle de caisse
+
+Le module financier distingue le chiffre d'affaires des mouvements d'argent. Il enregistre les recettes et les dépenses dans `transactions_financieres`, avec une catégorie, une description, un magasin, une session de caisse et un utilisateur.
+
+Le système calcule notamment :
+
+- chiffre d'affaires TTC;
+- ventes hors TVA;
+- coût d'achat des produits vendus;
+- bénéfice brut;
+- recettes financières;
+- dépenses financières;
+- total encaissé;
+- solde après dépenses;
+- montant attendu et écart de caisse.
+
+Les paiements en espèces sont distingués des paiements par carte ou Mobile Money pour que le montant attendu dans le tiroir ne soit pas faussé.
+
+### 15.8 TVA
+
+La TVA est calculée à partir du taux configuré dans les paramètres et enregistrée sur les ventes. Le rapport financier affiche :
+
+- la TVA du mois précédent;
+- la TVA du mois en cours;
+- le statut payé ou non payé;
+- la date et le montant du paiement;
+- le magasin concerné.
+
+Le paiement de la TVA du mois précédent est enregistré dans `paiements_tva`. Une contrainte unique par magasin et par mois empêche le double paiement administratif.
+
+### 15.9 Rapports, graphiques et exports
+
+La page des rapports propose :
+
+- filtres de dates;
+- filtre par magasin;
+- filtre par caissier;
+- chiffre d'affaires et nombre de ventes;
+- panier moyen et meilleure vente;
+- coût d'achat et bénéfice brut;
+- recettes, dépenses et solde;
+- CA de caisse du jour;
+- somme du jour par magasin;
+- meilleure vente de la journée;
+- top 5 produits;
+- top 5 caissiers avec leur magasin d'affectation;
+- top 5 magasins et leur pourcentage du chiffre d'affaires;
+- graphiques Chart.js;
+- export CSV;
+- impression ou génération PDF depuis le navigateur.
+
+La page d'historique global affiche les connexions, déconnexions, créations, modifications, suppressions, ventes, stock, transferts, erreurs et événements de sécurité. Elle permet une recherche par action, détail, IP ou utilisateur et un filtre par niveau de gravité.
+
+### 15.10 Notifications et communications
+
+Le système peut créer des notifications client lors de la création ou de la modification d'une commande. PHPMailer est disponible pour envoyer des messages concernant les commandes et leurs changements de statut, selon la configuration SMTP.
+
+### 15.11 Sauvegarde et maintenance
+
+Les outils de sauvegarde permettent :
+
+- création manuelle d'une sauvegarde;
+- sauvegarde automatique;
+- téléchargement;
+- import;
+- restauration;
+- consultation des journaux;
+- configuration des paramètres.
+
+Des outils d'optimisation, de nettoyage du stock périmé et de surveillance de sécurité complètent l'administration technique.
+
+## 16. Inventaire des principales pages
+
+| Domaine | Pages principales |
+|---|---|
+| Accès | `login.php`, `logout.php`, `inscription_client.php`, `profile.php` |
+| Administration | `dashboard.php`, `settings.php`, `utilisateurs.php`, `change_magasin.php` |
+| Catalogue | `produits.php`, `categories.php`, `barcode.php` |
+| Caisse | `sessions_caisse.php`, `caisse.php`, `ticket_pdf.php`, `verify_ticket.php` |
+| Ventes | `ventes_historique.php`, `vente_details_ajax.php`, `annuler_vente.php`, `retours.php` |
+| Stock | `stock_mouvements.php`, `historiques_produits.php`, `transferts-stock.php`, `nettoyage_stock.php` |
+| Approvisionnement | `fournisseurs.php`, `commandes.php`, `portail_fournisseur.php` |
+| Finance | `transactions.php`, `rapports.php`, `dashboard_pdf.php` |
+| Traçabilité | `historiques.php`, `security_logs.php` |
+| Espace client | `index.php`, `mes_commandes.php`, `commandes_clients.php`, `notifications_client.php` |
+| Sauvegardes | `backup.php` et le dossier `backups/` |
+
+## 17. Base de données et migrations
+
+Les migrations du projet documentent l'évolution de la base :
+
+- `001_multi_magasin_cleanup.sql` : normalisation du multi-magasins et nettoyage des données;
+- `002_commandes_clients.sql` : commandes clients et lignes de commande;
+- `003_caisses_physiques.sql` : caisses distinctes par magasin;
+- `004_commandes_clients_pro.sql` : code de retrait, dates de statut et notifications;
+- `005_client_session_without_store.sql` : compte client sans magasin permanent;
+- `006_commandes_fournisseurs_email.sql` : fonctions email fournisseur;
+- `007_alertes_stock_fournisseurs.sql` : alertes de stock pour fournisseurs;
+- `008_commandes_clients_paiement.sql` : mode de paiement de la commande client;
+- `009_paiements_tva.sql` : registre des paiements TVA par magasin et par mois.
+
+Les principales tables métier sont `magasins`, `utilisateurs`, `produits`, `categories`, `ventes`, `ligne_ventes`, `sessions_caisse`, `caisses`, `stock_mouvements`, `fournisseurs`, `commandes`, `ligne_commandes`, `transferts_stock`, `transactions_financieres`, `historiques`, `commandes_clients`, `lignes_commandes_clients`, `historique_commandes_clients`, `notifications_clients` et `paiements_tva`.
+
+## 18. Installation et exploitation
+
+### Prérequis
+
+- serveur Apache avec PHP;
+- MariaDB ou MySQL;
+- extension PDO MySQL;
+- extension JSON et fonctions de session;
+- Composer pour PHPMailer;
+- navigateur moderne;
+- Node.js uniquement pour reconstruire les ressources Tailwind si nécessaire.
+
+### Configuration
+
+1. créer la base `e_servicesburundi`;
+2. importer `e_servicesburundi.sql`;
+3. exécuter les migrations dans l'ordre;
+4. vérifier les paramètres de connexion dans `config.php`;
+5. installer les dépendances Composer;
+6. vérifier les droits d'écriture des dossiers `uploads/`, `backups/` et `cache/`;
+7. configurer le taux de TVA, la devise et éventuellement le SMTP;
+8. créer les magasins, les caisses et les utilisateurs;
+9. affecter chaque caissier à son magasin.
+
+### Contrôles avant production
+
+- utiliser un compte MySQL dédié avec un mot de passe;
+- désactiver l'affichage des erreurs détaillées;
+- protéger les dossiers de sauvegardes;
+- vérifier les certificats HTTPS;
+- tester la restauration d'une sauvegarde;
+- tester chaque rôle avec plusieurs magasins;
+- vérifier les clôtures de caisse et les écarts;
+- vérifier les exports et les permissions d'accès.
+
+## 19. Limites actuelles et évolutions futures
+
+Les limites connues sont :
+
+- les paiements clients par carte et Mobile Money ne sont pas encore connectés à une passerelle réelle;
+- le paiement TVA est un enregistrement administratif et ne remplace pas un paiement bancaire ou fiscal externe;
+- le coût d'achat et le bénéfice dépendent de la valeur `prix_achat` actuellement enregistrée sur le produit;
+- la comptabilité complète, les remboursements et les écritures de régularisation peuvent être approfondis;
+- les tests automatisés et les tests de concurrence doivent être renforcés;
+- les migrations doivent être exécutées une seule fois dans un environnement contrôlé;
+- le fonctionnement hors connexion des magasins reste à développer.
+
+Les prochaines évolutions recommandées sont :
+
+- intégrer une passerelle de paiement certifiée;
+- ajouter des tests PHPUnit et des tests end-to-end;
+- ajouter un inventaire avec session de comptage et validation;
+- historiser les changements de prix et de marge;
+- gérer les lots, dates de péremption et numéros de série;
+- ajouter une comptabilité plus complète;
+- créer des permissions plus fines que les seuls rôles;
+- chiffrer les sauvegardes sensibles;
+- ajouter des alertes email ou SMS configurables;
+- mettre en place une réplication ou une synchronisation inter-magasins.
+
+## 20. Résumé en une phrase
+
+**Le projet est une plateforme web centralisée qui permet à un supermarché multi-magasins de gérer ses utilisateurs, ventes, caisses, stocks, achats, transferts, finances, TVA, rapports, historiques et commandes clients, avec une séparation stricte des données et des accès entre les magasins.**

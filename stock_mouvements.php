@@ -231,6 +231,21 @@ if (
             $magasin_id
         ]);
 
+        if ($type === 'ajout_stock') {
+            $lot = $pdo->prepare('INSERT INTO lots_produits (produit_id, magasin_id, numero_lot, quantite_initiale, quantite_restante, prix_achat, date_expiration) VALUES (?, ?, ?, ?, ?, ?, ?)');
+            $lot->execute([
+                $produit_id,
+                $magasin_id,
+                trim((string)($_POST['numero_lot'] ?? '')) ?: null,
+                (float)$quantite,
+                (float)$quantite,
+                (float)$produit['prix_achat'],
+                $produit['date_peremption'],
+            ]);
+        } elseif ($type === 'perte') {
+            consumeProductLots($pdo, $produit_id, $magasin_id, (float)$quantite);
+        }
+
         /* =====================================================
            INSERT MOUVEMENT
         ===================================================== */

@@ -167,6 +167,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                 if ($stockStmt->rowCount() !== 1) {
                     throw new RuntimeException('Le stock du magasin de retrait n\'a pas pu être mis à jour.');
                 }
+                consumeProductLots($pdo, $productId, $magasinId, (float)$quantity);
                 $stockHistoryStmt->execute([
                     $magasinId,
                     $productId,

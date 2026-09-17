@@ -81,6 +81,8 @@ function updateClientOrderStatus(PDO $pdo, int $orderId, string $newStatus, int 
             $restore = $pdo->prepare('UPDATE produits SET quantite=quantite+? WHERE id=? AND magasin_id=?');
             foreach ($lines->fetchAll(PDO::FETCH_ASSOC) as $line) {
                 $restore->execute([(int)$line['quantite'], (int)$line['produit_id'], (int)$order['magasin_id']]);
+                $lot = $pdo->prepare('INSERT INTO lots_produits (produit_id, magasin_id, numero_lot, quantite_initiale, quantite_restante, prix_achat, date_expiration) SELECT id, ?, ?, ?, ?, prix_achat, date_peremption FROM produits WHERE id=? AND magasin_id=?');
+                $lot->execute([(int)$order['magasin_id'], 'ANNULATION-WEB-' . $orderId . '-' . $line['produit_id'], (float)$line['quantite'], (float)$line['quantite'], (int)$line['produit_id'], (int)$order['magasin_id']]);
             }
         }
 

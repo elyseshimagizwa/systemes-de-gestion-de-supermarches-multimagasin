@@ -719,6 +719,48 @@ if (!function_exists('jsonResponse')) {
     }
 }
 
+if (!function_exists('consumeProductLots')) {
+
+    function consumeProductLots(PDO $pdo, int $produitId, int $magasinId, float $quantity, int $ligneVenteId = 0): void
+    {
+        if ($quantity <= 0) {
+            throw new InvalidArgumentException('Quantité de lot invalide.');
+        }
+
+        $stmt = $pdo->prepare("SELECT id, quantite_restante, prix_achat FROM lots_produits WHERE produit_id=? AND magasin_id=? AND quantite_restante > 0 AND (date_expiration IS NULL OR date_expiration >= CURDATE()) AND statut='actif' ORDER BY date_expiration IS NULL, date_expiration, date_reception, id FOR UPDATE");
+        $stmt->execute([$produitId, $magasinId]);
+        $lots = $stmt->fetchAll();
+        $remaining = $quantity;
+
+        foreach ($lots as $lot) {
+            if ($remaining <= 0.000001) {
+                break;
+            }
+
+            $available = (float)$lot['quantite_restante'];
+            $taken = min($available, $remaining);
+            $newQuantity = $available - $taken;
+            $status = $newQuantity <= 0.000001 ? 'epuise' : 'actif';
+
+            $update = $pdo->prepare('UPDATE lots_produits SET quantite_restante=?, statut=? WHERE id=? AND quantite_restante>=?');
+            $update->execute([$newQuantity, $status, (int)$lot['id'], $taken]);
+            if ($update->rowCount() !== 1) {
+                throw new RuntimeException('Le lot produit n’a pas pu être réservé.');
+            }
+
+            if ($ligneVenteId > 0) {
+                $allocation = $pdo->prepare('INSERT INTO ligne_vente_lots (ligne_vente_id, lot_id, quantite, prix_achat) VALUES (?, ?, ?, ?)');
+                $allocation->execute([$ligneVenteId, (int)$lot['id'], $taken, (float)$lot['prix_achat']]);
+            }
+            $remaining -= $taken;
+        }
+
+        if ($remaining > 0.000001) {
+            throw new RuntimeException('Stock par lots insuffisant ou expiré.');
+        }
+    }
+}
+
 /* =========================================================
 | FORMAT MONEY
 ========================================================= */

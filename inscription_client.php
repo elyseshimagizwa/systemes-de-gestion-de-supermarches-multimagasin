@@ -25,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $roleColumn = $pdo->query("SHOW COLUMNS FROM utilisateurs LIKE 'role'")->fetch();
         if ($roleColumn && strpos((string)$roleColumn['Type'], "'client'") === false) {
-            $pdo->exec("ALTER TABLE utilisateurs MODIFY role enum('admin','caissier','client') NOT NULL DEFAULT 'caissier'");
+            $pdo->exec("ALTER TABLE utilisateurs MODIFY role enum('admin','caissier','client') NOT NULL DEFAULT 'client'");
         }
         if ($nom === '' || strlen($nom) < 2) {
             throw new RuntimeException('Veuillez saisir votre nom complet.');

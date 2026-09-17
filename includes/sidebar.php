@@ -660,6 +660,14 @@ function isActivePage($page, $currentPage)
             </a>
 
             <a
+                href="inventaires.php"
+                class="sidebar-link <?= isActivePage('inventaires.php',$currentPage) ?>"
+            >
+                <i class="fa fa-clipboard-check text-yellow-400"></i>
+                Inventaires
+            </a>
+
+            <a
                 href="historiques_produits.php"
                 class="sidebar-link <?= isActivePage('historiques_produits.php',$currentPage) ?>"
             >
@@ -738,7 +746,7 @@ function isActivePage($page, $currentPage)
                 class="sidebar-link <?= isActivePage('transferts-stock.php',$currentPage) ?>"
             >
                 <i class="fa fa-store text-blue-300"></i>
-                Multi magasins
+                transfert des produit entre les magasins
             </a>
 
             <?php endif; ?>
