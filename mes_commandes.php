@@ -6,18 +6,80 @@ requireLogin();
 $user = currentUser();
 $settings = getSettings();
 if (($user['role'] ?? '') !== 'client') { header('Location: dashboard.php'); exit; }
-$orders = [];
-$notifications = [];
+$success = $_SESSION['client_order_success'] ?? null;
+unset($_SESSION['client_order_success']);
+$error = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
+    $notificationId = filter_var($_POST['notification_id'] ?? null, FILTER_VALIDATE_INT);
+    if ($notificationId && $notificationId > 0) {
+        $stmt = $pdo->prepare('UPDATE notifications_clients SET lu=1 WHERE id=? AND utilisateur_id=?');
+        $stmt->execute([$notificationId, (int)$user['id']]);
+    }
+    header('Location: mes_commandes.php#notifications', true, 303);
+    exit;
+}
+require_once __DIR__ . '/includes/client-tracking.php';
 try {
-    $stmt = $pdo->prepare('SELECT cc.*, m.nom AS magasin_nom, m.adresse, m.ville FROM commandes_clients cc JOIN magasins m ON m.id=cc.magasin_id WHERE cc.utilisateur_id=? ORDER BY cc.date_commande DESC');
-    $stmt->execute([(int)$user['id']]);
-    $orders = $stmt->fetchAll();
-    $notificationStmt = $pdo->prepare('SELECT * FROM notifications_clients WHERE utilisateur_id=? ORDER BY created_at DESC LIMIT 20');
-    $notificationStmt->execute([(int)$user['id']]);
-    $notifications = $notificationStmt->fetchAll();
-} catch (Throwable $exception) {}
-$lines = $pdo->prepare('SELECT nom_produit, quantite, prix_unitaire, sous_total FROM lignes_commandes_clients WHERE commande_id=? ORDER BY id');
-register_shutdown_function(static function (): void {
-    include __DIR__ . '/includes/footer.php';
-});
-?><!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mes commandes</title><link rel="stylesheet" href="assets/tailwind.css"><?php renderIconAssets('assets/vendor/fontawesome.min.css'); ?></head><body class="min-h-screen bg-[#f6f7f2]"><header class="bg-green-950 px-5 py-5 text-white"><nav class="mx-auto flex max-w-5xl items-center justify-between"><a href="index.php" class="text-2xl font-black">Boutique</a><div class="flex gap-4"><span><?= e($user['nom']) ?></span><a href="logout.php" class="text-lime-300">Déconnexion</a></div></nav></header><main class="mx-auto max-w-5xl px-5 py-10"><div class="mb-8"><h1 class="text-3xl font-black">Mes commandes</h1><p class="mt-2 text-gray-600">Suivez l’état de vos commandes et leur magasin de retrait.</p></div><?php if (!$orders): ?><div class="rounded-2xl bg-white p-8">Vous n’avez encore aucune commande. <a class="font-bold text-green-800" href="index.php">Découvrir les produits</a></div><?php endif; ?><div class="space-y-5"><?php foreach ($orders as $order): $lines->execute([(int)$order['id']]); ?><article class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-black/5"><div class="flex flex-wrap justify-between gap-4"><div><h2 class="text-xl font-black"><?= e($order['numero']) ?></h2><p class="text-sm text-gray-500"><?= e($order['date_commande']) ?></p><p class="mt-2"><i class="fa-solid fa-location-dot mr-1 text-green-700"></i><?= e($order['magasin_nom']) ?><?= $order['ville'] ? ' - '.e($order['ville']) : '' ?></p></div><div class="text-right"><span class="rounded-full bg-lime-100 px-3 py-1 text-sm font-bold text-green-900"><?= e($order['statut']) ?></span><p class="mt-3 text-xl font-black text-green-800"><?= number_format((float)$order['total'], 2, ',', ' ') ?></p></div></div><div class="mt-5 border-t pt-4 text-sm"><?php foreach ($lines->fetchAll() as $line): ?><div class="flex justify-between py-1"><span><?= e($line['nom_produit']) ?> × <?= (int)$line['quantite'] ?></span><span><?= number_format((float)$line['sous_total'], 2, ',', ' ') ?></span></div><?php endforeach; ?></div></article><?php endforeach; ?></div></main></body></html>
+    $tracking = clientTrackingData($pdo, (int)$user['id']);
+} catch (Throwable $exception) {
+    error_log('Notifications client : ' . $exception->getMessage());
+    $tracking = ['notifications' => []];
+    $error = 'Le suivi est temporairement indisponible.';
+}
+
+?>
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mes commandes</title>
+<link rel="stylesheet" href="assets/tailwind.css">
+<?php renderIconAssets('assets/vendor/fontawesome.min.css'); ?>
+</head>
+<body class="min-h-screen bg-[#f6f7f2]">
+<?php include __DIR__ . '/includes/client-navbar.php'; ?>
+<main class="mx-auto max-w-5xl px-5 py-10">
+<div class="mb-8">
+<h1 class="text-3xl font-black">Mes commandes</h1>
+<p class="mt-2 text-gray-600">Suivez l’état de vos commandes et leur magasin de retrait.</p>
+</div>
+<?php if ($success): ?>
+<p role="status" class="mb-5 rounded-xl bg-green-100 p-4">Votre commande <?= e($success['number']) ?> a été enregistrée.</p>
+<script>try { localStorage.removeItem('client_cart'); } catch (error) {}</script>
+<?php endif; ?>
+<?php if ($error): ?><p role="alert"><?= e($error) ?></p><?php endif; ?>
+<button id="refresh-tracking" type="button" class="mb-5 rounded-xl bg-white p-3">Actualiser le suivi</button>
+<div id="client-orders" class="space-y-5">
+<?php
+try { renderClientOrders($pdo, (int)$user['id']); }
+catch (Throwable $exception) {
+    error_log('Commandes client : ' . $exception->getMessage());
+    echo '<p role="alert">Impossible de charger vos commandes. Veuillez réessayer.</p>';
+}
+?>
+</div>
+<section id="notifications" class="mt-8">
+<h2 class="text-2xl font-bold">Notifications</h2>
+<p class="mt-2">Les 30 dernières notifications. Actualisation toutes les 20 secondes lorsque cette page est visible.</p>
+<div id="client-notifications" class="mt-4 space-y-3" data-csrf="<?= e(csrf_token()) ?>">
+<?php if (!$tracking['notifications']): ?><p>Aucune notification pour le moment.</p><?php endif; ?>
+<?php foreach ($tracking['notifications'] as $notification): ?>
+<article class="rounded-xl bg-white p-4">
+<strong><?= e($notification['titre']) ?><?= !$notification['lu'] ? ' — Non lue' : '' ?></strong>
+<p><?= e($notification['message']) ?></p><p><?= e($notification['created_at']) ?></p>
+<?php if ($notification['commande_id']): ?><a href="#commande-<?= (int)$notification['commande_id'] ?>">Voir la commande</a><?php endif; ?>
+<?php if (!$notification['lu']): ?>
+<form method="post" action="mes_commandes.php#notifications">
+<input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+<input type="hidden" name="notification_id" value="<?= (int)$notification['id'] ?>">
+<button type="submit">Marquer comme lue</button>
+</form>
+<?php endif; ?></article>
+<?php endforeach; ?>
+</div></section>
+</main>
+<?php include __DIR__ . '/includes/footer.php'; ?>
+</body>
+</html>

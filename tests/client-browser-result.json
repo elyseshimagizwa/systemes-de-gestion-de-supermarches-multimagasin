@@ -17,6 +17,22 @@
       "ok": true
     },
     {
+      "name": "Notification initiale visible",
+      "ok": true
+    },
+    {
+      "name": "Notification marquee lue",
+      "ok": true
+    },
+    {
+      "name": "Statut et historique actualises automatiquement",
+      "ok": true
+    },
+    {
+      "name": "Notifications de progression recues",
+      "ok": true
+    },
+    {
       "name": "Une commande, stock et lot debites une fois",
       "ok": true
     },

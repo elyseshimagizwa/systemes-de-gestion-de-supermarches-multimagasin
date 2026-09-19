@@ -712,7 +712,8 @@ body{
 
 </head>
 
-<body class="min-h-screen flex items-center justify-center p-4">
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+<?php include __DIR__ . '/includes/client-navbar.php'; ?>
 
 <div class="glass w-full max-w-md rounded-3xl p-8 shadow-2xl fade-in">
 

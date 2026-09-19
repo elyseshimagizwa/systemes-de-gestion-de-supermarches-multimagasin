@@ -194,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             } catch (Throwable $mailError) {
                 error_log('Notification commande : ' . $mailError->getMessage());
             }
-            header('Location: index.php', true, 303);
+            header('Location: mes_commandes.php#commande-' . $orderId, true, 303);
             exit;
         } catch (Throwable $exception) {
             if ($pdo->inTransaction()) {
@@ -249,7 +249,7 @@ function clientPhoto(array $product): string
 </head>
 <body>
 <header class="hero">
-    <nav class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-5"><a href="index.php" class="flex items-center gap-3 text-2xl font-black"><?php if (!empty($settings['logo'])): ?><img src="<?= e($settings['logo']) ?>" alt="<?= e($settings['nom_boutique'] ?? 'Boutique') ?>" class="h-12 w-12 rounded-xl object-cover"><?php endif; ?><span><?= e($settings['nom_boutique'] ?? 'Boutique') ?></span></a><div class="flex flex-wrap items-center gap-4 text-sm font-bold"><a href="#fonctionnalites">Fonctionnalités</a><a href="#services">Services</a><a href="#faq">FAQ</a><?php if ($isClientLoggedIn): ?><span>Bonjour, <?= e($clientUser['nom']) ?></span><a href="mes_commandes.php">Mes commandes</a><a href="logout.php">Déconnexion</a><?php else: ?><a href="inscription_client.php">Inscription</a><a href="login.php">Login</a><?php endif; ?><button type="button" onclick="toggleCart()" class="rounded-full bg-white px-5 py-3 font-bold text-green-950"><i class="fa-solid fa-bag-shopping mr-2"></i>Panier (<span id="cart-count"><?= $cartCount ?></span>)</button></div></nav>
+    <?php include __DIR__ . '/includes/client-navbar.php'; ?>
     <div class="mx-auto max-w-7xl px-5 pb-16 pt-10"><p class="mb-3 font-bold uppercase tracking-widest text-lime-200">Disponible près de chez vous</p><h1 class="max-w-3xl text-4xl font-black md:text-6xl">Les produits que vous aimez, simplement.</h1><p class="mt-5 max-w-xl text-lg text-green-50">Découvrez les produits les plus vendus et choisissez votre magasin de retrait.</p></div>
 </header>
 <main class="mx-auto max-w-7xl px-5 py-10">
@@ -302,6 +302,7 @@ function changeQty(id, amount){ cart[id] = Math.max(0, Math.min((cart[id] || 0) 
 function toggleCart(force){ const panel=document.getElementById('cart-panel'), overlay=document.getElementById('cart-overlay'); const open=force === true ? true : !panel.classList.contains('is-open'); panel.classList.toggle('is-open', open); panel.classList.toggle('hidden', !open); overlay.classList.toggle('hidden', !open); }
 function renderCart(){ let total=0,count=0,html=''; Object.entries(cart).forEach(([id,qty])=>{const p=products[id]; if(!p)return; const line=Number(p.prix_vente)*qty; total+=line;count+=qty;html+=`<div class="cart-line rounded-xl bg-gray-50 p-3"><div class="flex items-start justify-between gap-3"><strong>${escapeHtml(p.nom)}</strong><button type="button" onclick="changeQty(${id},-${qty})" class="text-red-600" aria-label="Supprimer"><i class="fa-solid fa-trash"></i></button></div><div class="mt-3 flex items-center justify-between"><span class="text-sm text-gray-500">${Number(p.prix_vente).toFixed(2)} × ${qty}</span><span class="cart-quantity flex gap-2"><button type="button" onclick="changeQty(${id},-1)" aria-label="Diminuer">−</button><span class="flex min-w-8 items-center justify-center font-bold">${qty}</span><button type="button" onclick="changeQty(${id},1)" aria-label="Augmenter">+</button></span></div></div>`}); document.getElementById('cart-lines').innerHTML=html || '<p class="rounded-xl bg-gray-50 p-4 text-gray-500">Votre panier est vide.</p>';document.getElementById('cart-total').textContent=total.toFixed(2);document.getElementById('cart-count').textContent=count;saveCart();}
 function escapeHtml(value){const div=document.createElement('div');div.textContent=value;return div.innerHTML;} renderCart();
+if (location.hash === '#panier') toggleCart(true);
 </script>
 <script>
 const orderForm = document.querySelector('#cart-panel form[method="post"]');
