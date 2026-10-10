@@ -42,6 +42,50 @@ if (!function_exists('e')) {
     }
 }
 
+if (!function_exists('generateTicketNumber')) {
+
+    function generateTicketNumber(): string
+    {
+        return 'TK-' . date('YmdHis') . '-' . strtoupper(bin2hex(random_bytes(4)));
+    }
+}
+
+if (!function_exists('normalizeSaleQuantities')) {
+
+    function normalizeSaleQuantities(array $items): array
+    {
+        if (!$items || count($items) > 200) {
+            throw new InvalidArgumentException('Panier vide ou trop volumineux.');
+        }
+
+        $quantities = [];
+        foreach ($items as $item) {
+            $productIdInput = is_array($item) ? ($item['id'] ?? null) : null;
+            if (
+                !is_array($item)
+                || (!is_int($productIdInput) && !is_string($productIdInput))
+                || !ctype_digit((string)$productIdInput)
+                || !is_numeric($item['qty'] ?? null)
+            ) {
+                throw new InvalidArgumentException('Produit ou quantité invalide.');
+            }
+
+            $productId = (int)$productIdInput;
+            $quantity = round((float)$item['qty'], 3);
+            if ($productId <= 0 || !is_finite($quantity) || $quantity <= 0 || $quantity > 10000) {
+                throw new InvalidArgumentException('Produit ou quantité invalide.');
+            }
+
+            $quantities[$productId] = round(($quantities[$productId] ?? 0) + $quantity, 3);
+            if ($quantities[$productId] > 10000) {
+                throw new InvalidArgumentException('Quantité trop élevée.');
+            }
+        }
+
+        return $quantities;
+    }
+}
+
 /* =========================================================
 | AUTH SYSTEM
 ========================================================= */
@@ -58,7 +102,22 @@ if (!function_exists('currentUser')) {
 
     function currentUser()
     {
-        return $_SESSION['user'] ?? null;
+        $user = $_SESSION['user'] ?? null;
+
+        if (!$user) {
+            return null;
+        }
+
+        $activeMagasinId = (int)($_SESSION['magasin_actif'] ?? 0);
+
+        if (
+            $activeMagasinId > 0
+            && ($user['role'] ?? '') === 'admin'
+        ) {
+            $user['magasin_id'] = $activeMagasinId;
+        }
+
+        return $user;
     }
 }
 
@@ -81,6 +140,13 @@ if (!function_exists('requireLogin')) {
 
 if (!function_exists('requireRole')) {
 
+    function denyClientBackofficeAccess()
+    {
+        http_response_code(403);
+        echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta http-equiv="refresh" content="3;url=index.php"><title>Accès refusé</title></head><body style="font-family:Arial,sans-serif;padding:40px;text-align:center;background:#f6f7f2;color:#17221b"><h1>⛔ Accès refusé</h1><p>Votre compte client ne peut pas accéder à cet espace.</p><p>Redirection vers la boutique dans 3 secondes...</p><a href="index.php">Retour immédiat à la boutique</a><script>setTimeout(function(){ window.location.replace("index.php"); }, 3000);</script></body></html>';
+        exit;
+    }
+
     function requireRole($roles)
     {
         requireLogin();
@@ -93,6 +159,10 @@ if (!function_exists('requireRole')) {
                 (array)$roles
             )
         ) {
+
+            if (($user['role'] ?? '') === 'client') {
+                denyClientBackofficeAccess();
+            }
 
             header("Location: dashboard.php");
 
@@ -158,20 +228,67 @@ if (!function_exists('canAccessMagasin')) {
 
 if (!function_exists('currentOpenCaisseId')) {
 
+    function currentCaisseId($magasinId = null)
+    {
+        global $pdo;
+
+        $magasinId = $magasinId ?? currentMagasinId();
+        $selectedId = (int)($_SESSION['caisse_active'] ?? 0);
+
+        if ((int)$magasinId <= 0) {
+            return null;
+        }
+
+        if ($selectedId > 0) {
+            $stmt = $pdo->prepare("SELECT id FROM caisses WHERE id=? AND magasin_id=? AND statut='active' LIMIT 1");
+            $stmt->execute([$selectedId, (int)$magasinId]);
+
+            if ($stmt->fetchColumn()) {
+                return $selectedId;
+            }
+        }
+
+        $stmt = $pdo->prepare("SELECT id FROM caisses WHERE magasin_id=? AND statut='active' ORDER BY id ASC LIMIT 1");
+        $stmt->execute([(int)$magasinId]);
+        $id = $stmt->fetchColumn();
+
+        if ($id === false) {
+            return null;
+        }
+
+        $_SESSION['caisse_active'] = (int)$id;
+        return (int)$id;
+    }
+
+    function setCaisseActive($caisseId, $magasinId = null)
+    {
+        global $pdo;
+
+        $magasinId = $magasinId ?? currentMagasinId();
+        $stmt = $pdo->prepare("SELECT id FROM caisses WHERE id=? AND magasin_id=? AND statut='active' LIMIT 1");
+        $stmt->execute([(int)$caisseId, (int)$magasinId]);
+
+        if (!$stmt->fetchColumn()) {
+            return false;
+        }
+
+        $_SESSION['caisse_active'] = (int)$caisseId;
+        return true;
+    }
+
     function currentOpenCaisseId($utilisateurId = null, $magasinId = null)
     {
         global $pdo;
 
-        $user = currentUser();
-        $utilisateurId = $utilisateurId ?? ($user['id'] ?? 0);
         $magasinId = $magasinId ?? currentMagasinId();
+        $caisseId = currentCaisseId($magasinId);
 
-        if ((int)$utilisateurId <= 0 || (int)$magasinId <= 0) {
+        if ((int)$caisseId <= 0 || (int)$magasinId <= 0) {
             return null;
         }
 
-        $stmt = $pdo->prepare("SELECT id FROM sessions_caisse WHERE utilisateur_id=? AND magasin_id=? AND statut='ouverte' LIMIT 1");
-        $stmt->execute([(int)$utilisateurId, (int)$magasinId]);
+        $stmt = $pdo->prepare("SELECT id FROM sessions_caisse WHERE caisse_id=? AND magasin_id=? AND statut='ouverte' LIMIT 1");
+        $stmt->execute([(int)$caisseId, (int)$magasinId]);
 
         $id = $stmt->fetchColumn();
         return $id === false ? null : (int)$id;
@@ -646,6 +763,48 @@ if (!function_exists('jsonResponse')) {
     }
 }
 
+if (!function_exists('consumeProductLots')) {
+
+    function consumeProductLots(PDO $pdo, int $produitId, int $magasinId, float $quantity, int $ligneVenteId = 0): void
+    {
+        if ($quantity <= 0) {
+            throw new InvalidArgumentException('Quantité de lot invalide.');
+        }
+
+        $stmt = $pdo->prepare("SELECT id, quantite_restante, prix_achat FROM lots_produits WHERE produit_id=? AND magasin_id=? AND quantite_restante > 0 AND (date_expiration IS NULL OR date_expiration >= CURDATE()) AND statut='actif' ORDER BY date_expiration IS NULL, date_expiration, date_reception, id FOR UPDATE");
+        $stmt->execute([$produitId, $magasinId]);
+        $lots = $stmt->fetchAll();
+        $remaining = $quantity;
+
+        foreach ($lots as $lot) {
+            if ($remaining <= 0.000001) {
+                break;
+            }
+
+            $available = (float)$lot['quantite_restante'];
+            $taken = min($available, $remaining);
+            $newQuantity = $available - $taken;
+            $status = $newQuantity <= 0.000001 ? 'epuise' : 'actif';
+
+            $update = $pdo->prepare('UPDATE lots_produits SET quantite_restante=?, statut=? WHERE id=? AND quantite_restante>=?');
+            $update->execute([$newQuantity, $status, (int)$lot['id'], $taken]);
+            if ($update->rowCount() !== 1) {
+                throw new RuntimeException('Le lot produit n’a pas pu être réservé.');
+            }
+
+            if ($ligneVenteId > 0) {
+                $allocation = $pdo->prepare('INSERT INTO ligne_vente_lots (ligne_vente_id, lot_id, quantite, prix_achat) VALUES (?, ?, ?, ?)');
+                $allocation->execute([$ligneVenteId, (int)$lot['id'], $taken, (float)$lot['prix_achat']]);
+            }
+            $remaining -= $taken;
+        }
+
+        if ($remaining > 0.000001) {
+            throw new RuntimeException('Stock par lots insuffisant ou expiré.');
+        }
+    }
+}
+
 /* =========================================================
 | FORMAT MONEY
 ========================================================= */
@@ -685,4 +844,3 @@ if (!function_exists('randomToken')) {
 /* =========================================================
 | DONE
 ========================================================= */
-

@@ -111,10 +111,13 @@ $sql = "
 SELECT
     v.*,
     u.nom AS utilisateur_nom, -- Résout le conflit de la clé 'nom'
-    m.nom AS magasin_nom       -- Optionnel : pour afficher le nom du magasin
+    m.nom AS magasin_nom,
+    c.nom AS caisse_nom,
+    COALESCE(c.code, CONCAT('Caisse #', v.caisse_id)) AS caisse_code
 FROM ventes v
 LEFT JOIN utilisateurs u ON u.id = v.utilisateur_id
 LEFT JOIN magasins m ON m.id = v.magasin_id
+LEFT JOIN caisses c ON c.id = v.caisse_id
 ";
 
 /* Application des filtres WHERE */
@@ -478,6 +481,7 @@ value="<?= $m['id'] ?>"
     <th class="p-4 text-left">#</th>
     <th class="p-4 text-left">Caissier</th>
      <th class="p-4 text-left">Magasin</th>
+    <th class="p-4 text-left">Caisse</th>
     <th class="p-4 text-left">Montant TTC</th>
     <th class="p-4 text-left">TVA</th>
     <th class="p-4 text-left">Paiement</th>
@@ -520,6 +524,11 @@ $tva = isset($v['tva'])
 
 </td>
 
+    <td class="p-4">
+        <?= e($v['caisse_nom'] ?? '-') ?>
+        <small class="block text-slate-500"><?= e($v['caisse_code'] ?? '-') ?></small>
+    </td>
+
     <td class="p-4 text-green-600 font-bold">
         <?= number_format($total,2) ?> <?= $devise ?>
     </td>
@@ -542,7 +551,7 @@ $tva = isset($v['tva'])
 
         <div class="flex gap-2 flex-wrap">
 
-            <a href="ticket_pdf.php?id=<?= $v['id'] ?>"
+            <a href="ticket_pdf.php?ticket=<?= $v['id'] ?>"
                target="_blank"
                class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm">
 
@@ -557,7 +566,7 @@ $tva = isset($v['tva'])
                 👁 Détails
             </button>
 
-            <a href="ticket_pdf.php?id=<?= $v['id'] ?>"
+            <a href="ticket_pdf.php?ticket=<?= $v['id'] ?>"
                target="_blank"
                class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm">
 

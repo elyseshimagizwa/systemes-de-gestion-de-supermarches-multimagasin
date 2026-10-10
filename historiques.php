@@ -17,7 +17,7 @@ $devise =
 ========================================= */
 
 $periode =
-    $_GET['periode'] ?? 'today';
+    $_GET['periode'] ?? (isAdmin() ? 'all' : 'today');
 
 $userId =
     $_GET['user'] ?? '';
@@ -25,8 +25,9 @@ $userId =
 $magasinId =
     $_GET['magasin'] ?? '';
 
-$actionType =
-    $_GET['type'] ?? '';
+$actionType = trim((string)($_GET['type'] ?? ''));
+$niveau = trim((string)($_GET['niveau'] ?? ''));
+$search = trim((string)($_GET['search'] ?? ''));
 
 $where = [];
 $params = [];
@@ -108,6 +109,17 @@ if($actionType){
         $actionType;
 }
 
+if ($niveau) {
+    $where[] = 'h.niveau=?';
+    $params[] = strtoupper($niveau);
+}
+
+if ($search !== '') {
+    $where[] = '(h.action LIKE ? OR h.details LIKE ? OR h.ip LIKE ? OR u.nom LIKE ? OR u.email LIKE ?)';
+    $searchValue = '%' . $search . '%';
+    array_push($params, $searchValue, $searchValue, $searchValue, $searchValue, $searchValue);
+}
+
 /* =========================================
    QUERY
 ========================================= */
@@ -155,6 +167,17 @@ $stmt->execute($params);
 
 $historiques =
     $stmt->fetchAll();
+
+$actionOptionsSql = 'SELECT DISTINCT action FROM historiques WHERE action IS NOT NULL AND action<>\'\'';
+$actionOptionsParams = [];
+if (!isAdmin()) {
+    $actionOptionsSql .= ' AND magasin_id=?';
+    $actionOptionsParams[] = (int)currentMagasinId();
+}
+$actionOptionsSql .= ' ORDER BY action ASC';
+$actionOptionsStmt = $pdo->prepare($actionOptionsSql);
+$actionOptionsStmt->execute($actionOptionsParams);
+$actionOptions = $actionOptionsStmt->fetchAll(PDO::FETCH_COLUMN);
 
 /* =========================================
    USERS
@@ -333,7 +356,7 @@ body{
 <div class="shopify-card p-5 mb-6">
 
 <form method="GET"
-      class="grid md:grid-cols-5 gap-4">
+    class="grid md:grid-cols-6 gap-4">
 
     <!-- PERIODE -->
 
@@ -424,27 +447,19 @@ body{
 
     <!-- TYPE -->
 
-    <select
-        name="type"
-        class="border p-3 rounded-2xl"
-    >
+    <select name="type" class="border p-3 rounded-2xl">
 
-        <option value="">
-            Tous types
-        </option>
+        <?php foreach ($actionOptions as $availableAction): ?>
+            <option value="<?= e($availableAction) ?>" <?= $actionType === $availableAction ? 'selected' : '' ?>><?= e($availableAction) ?></option>
+        <?php endforeach; ?>
 
-        <option value="LOGIN">
-            LOGIN
-        </option>
 
-        <option value="VENTE">
-            VENTE
-        </option>
+    <select name="niveau" class="border p-3 rounded-2xl">
+        <option value="">Tous niveaux</option>
+        <?php foreach (['INFO', 'SUCCESS', 'WARNING', 'DANGER'] as $availableLevel): ?><option value="<?= $availableLevel ?>" <?= strtoupper($niveau) === $availableLevel ? 'selected' : '' ?>><?= $availableLevel ?></option><?php endforeach; ?>
+    </select>
 
-        <option value="DELETE">
-            DELETE
-        </option>
-
+    <input name="search" value="<?= e($search) ?>" placeholder="Action, détail, IP ou utilisateur" class="border p-3 rounded-2xl">
         <option value="SECURITY">
             SECURITY
         </option>

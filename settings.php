@@ -217,6 +217,9 @@ if (
     $magasinId =
     $pdo->lastInsertId();
 
+    $pdo->prepare("INSERT INTO caisses (magasin_id, nom, code) VALUES (?, ?, ?)")
+        ->execute([$magasinId, 'Caisse principale', 'C-'.$magasinId]);
+
 historique(
 
     $pdo,
@@ -238,6 +241,41 @@ historique(
     );
 
     header("Location: settings.php");
+    exit;
+}
+
+/* =========================
+   GESTION DES CAISSES
+========================= */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_caisse'])) {
+    verify_csrf();
+
+    $magasinId = (int)($_POST['caisse_magasin_id'] ?? 0);
+    $nomCaisse = trim($_POST['nom_caisse'] ?? '');
+    $codeCaisse = trim($_POST['code_caisse'] ?? '');
+
+    if ($magasinId <= 0 || $nomCaisse === '' || $codeCaisse === '') {
+        flash('error', 'Magasin, nom et code de caisse sont obligatoires.');
+    } else {
+        $stmt = $pdo->prepare("INSERT INTO caisses (magasin_id, nom, code) VALUES (?, ?, ?)");
+        $stmt->execute([$magasinId, $nomCaisse, $codeCaisse]);
+        historique($pdo, $user['id'], 'AJOUT_CAISSE', 'Caisse ajoutée : '.$nomCaisse, 'SUCCESS', $magasinId);
+        flash('success', '✅ Caisse ajoutée');
+    }
+
+    header('Location: settings.php');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_caisse'])) {
+    verify_csrf();
+
+    $caisseId = (int)$_POST['toggle_caisse'];
+    $pdo->prepare("UPDATE caisses SET statut=IF(statut='active','inactive','active') WHERE id=?")
+        ->execute([$caisseId]);
+
+    flash('success', '✅ Statut de la caisse modifié');
+    header('Location: settings.php');
     exit;
 }
 
@@ -478,6 +516,13 @@ if (
     $tva =
         (float)$_POST['tva'];
 
+    $smtpHost = trim($_POST['smtp_host'] ?? '');
+    $smtpPort = (int)($_POST['smtp_port'] ?? 587);
+    $smtpUsername = trim($_POST['smtp_username'] ?? '');
+    $smtpPassword = (string)($_POST['smtp_password'] ?? '');
+    $smtpSecure = trim($_POST['smtp_secure'] ?? 'tls');
+    $smtpFromEmail = trim($_POST['smtp_from_email'] ?? '');
+
     $logoPath =
         $settings['logo'];
 
@@ -549,6 +594,12 @@ if (
                 pays=?,
                 devise=?,
                 tva=?,
+                smtp_host=?,
+                smtp_port=?,
+                smtp_username=?,
+                smtp_password=IF(?='', smtp_password, ?),
+                smtp_secure=?,
+                smtp_from_email=?,
                 updated_at=NOW()
 
             WHERE id=1
@@ -563,7 +614,14 @@ if (
         $adresse,
         $pays,
         $devise,
-        $tva
+        $tva,
+        $smtpHost,
+        $smtpPort,
+        $smtpUsername,
+        $smtpPassword,
+        $smtpPassword,
+        $smtpSecure,
+        $smtpFromEmail
     ]);
 
     flash(
@@ -586,6 +644,7 @@ $magasins =
     ")->fetchAll();
 
 $nextMagasinCode = generateMagasinCode($pdo);
+$caisses = $pdo->query("SELECT c.*, m.nom AS magasin_nom FROM caisses c JOIN magasins m ON m.id=c.magasin_id ORDER BY m.nom, c.nom")->fetchAll();
 
 /* =========================
    STATS
@@ -763,6 +822,16 @@ include 'includes/sidebar.php';
     class="w-full border p-4 rounded-2xl"
 ><?= e($settings['adresse']) ?></textarea>
 
+<h3 class="mt-6 text-lg font-black">Configuration email SMTP</h3>
+<div class="mt-3 grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <input name="smtp_host" value="<?= e($settings['smtp_host'] ?? '') ?>" placeholder="Serveur SMTP" class="border p-3 rounded-xl">
+    <input type="number" name="smtp_port" value="<?= (int)($settings['smtp_port'] ?? 587) ?>" placeholder="Port SMTP" class="border p-3 rounded-xl">
+    <input name="smtp_username" value="<?= e($settings['smtp_username'] ?? '') ?>" placeholder="Utilisateur SMTP" class="border p-3 rounded-xl">
+    <input type="password" name="smtp_password" placeholder="Mot de passe SMTP (laisser vide pour garder)" class="border p-3 rounded-xl">
+    <select name="smtp_secure" class="border p-3 rounded-xl"><option value="tls" <?= ($settings['smtp_secure'] ?? 'tls') === 'tls' ? 'selected' : '' ?>>TLS</option><option value="ssl" <?= ($settings['smtp_secure'] ?? '') === 'ssl' ? 'selected' : '' ?>>SSL</option></select>
+    <input type="email" name="smtp_from_email" value="<?= e($settings['smtp_from_email'] ?? '') ?>" placeholder="Email expéditeur" class="border p-3 rounded-xl">
+</div>
+
 <button class="bg-blue-600 text-white px-8 py-4 rounded-2xl font-bold">
 
     💾 Sauvegarder
@@ -880,6 +949,49 @@ include 'includes/sidebar.php';
 
 </form>
 
+</div>
+
+<!-- GESTION DES CAISSES -->
+<div class="bg-white dark:bg-slate-900 rounded-3xl shadow-xl p-6 mb-8">
+    <h2 class="text-2xl font-black mb-5">💳 Caisses physiques</h2>
+
+    <form method="POST" class="grid md:grid-cols-4 gap-4 mb-6">
+        <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
+        <input type="hidden" name="add_caisse" value="1">
+        <select name="caisse_magasin_id" class="border p-3 rounded-xl" required>
+            <option value="">Choisir un magasin</option>
+            <?php foreach($magasins as $m): ?>
+                <option value="<?= (int)$m['id'] ?>"><?= e($m['nom']) ?></option>
+            <?php endforeach; ?>
+        </select>
+        <input type="text" name="nom_caisse" placeholder="Nom : Caisse 2" class="border p-3 rounded-xl" required>
+        <input type="text" name="code_caisse" placeholder="Code : C-1-2" class="border p-3 rounded-xl" required>
+        <button class="bg-emerald-600 text-white px-5 py-3 rounded-xl font-bold">➕ Ajouter caisse</button>
+    </form>
+
+    <div class="overflow-x-auto">
+        <table class="w-full">
+            <thead class="bg-slate-100 dark:bg-slate-800">
+                <tr><th class="p-3 text-left">Magasin</th><th class="p-3 text-left">Caisse</th><th class="p-3 text-left">Code</th><th class="p-3 text-left">Statut</th><th class="p-3 text-left">Action</th></tr>
+            </thead>
+            <tbody>
+            <?php foreach($caisses as $c): ?>
+                <tr class="border-t">
+                    <td class="p-3"><?= e($c['magasin_nom']) ?></td>
+                    <td class="p-3 font-bold"><?= e($c['nom']) ?></td>
+                    <td class="p-3"><?= e($c['code']) ?></td>
+                    <td class="p-3"><?= e($c['statut']) ?></td>
+                    <td class="p-3">
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
+                            <button name="toggle_caisse" value="<?= (int)$c['id'] ?>" class="bg-slate-700 text-white px-3 py-2 rounded-xl">Activer / désactiver</button>
+                        </form>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <!-- TABLE -->

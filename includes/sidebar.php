@@ -54,9 +54,6 @@ function isActivePage($page, $currentPage)
 
 ?>
 
-<link rel="stylesheet"
-href="<?= e($assetBasePath) ?>/vendor/fontawesome.min.css">
-
 <style>
 
 /* =========================================================
@@ -612,6 +609,16 @@ href="<?= e($assetBasePath) ?>/vendor/fontawesome.min.css">
                 Commandes
             </a>
 
+            <?php if($isAdmin): ?>
+            <a
+                href="commandes_clients.php"
+                class="sidebar-link <?= isActivePage('commandes_clients.php',$currentPage) ?>"
+            >
+                <i class="fa fa-globe text-lime-400"></i>
+                Commandes web
+            </a>
+            <?php endif; ?>
+
             <a
                 href="sessions_caisse.php"
                 class="sidebar-link <?= isActivePage('sessions_caisse.php',$currentPage) ?>"
@@ -650,6 +657,14 @@ href="<?= e($assetBasePath) ?>/vendor/fontawesome.min.css">
             >
                 <i class="fa fa-exchange-alt text-emerald-400"></i>
                 Mouvements stock
+            </a>
+
+            <a
+                href="inventaires.php"
+                class="sidebar-link <?= isActivePage('inventaires.php',$currentPage) ?>"
+            >
+                <i class="fa fa-clipboard-check text-yellow-400"></i>
+                Inventaires
             </a>
 
             <a
@@ -731,7 +746,7 @@ href="<?= e($assetBasePath) ?>/vendor/fontawesome.min.css">
                 class="sidebar-link <?= isActivePage('transferts-stock.php',$currentPage) ?>"
             >
                 <i class="fa fa-store text-blue-300"></i>
-                Multi magasins
+                transfert des produit entre les magasins
             </a>
 
             <?php endif; ?>

@@ -399,6 +399,8 @@ try {
             magasin_id,
             nom,
             codebarre,
+            unite_mesure,
+            mode_vente,
             prix_achat,
             prix_vente,
             quantite,
@@ -406,11 +408,15 @@ try {
             date_peremption,
             fournisseur_id,
             categorie_id,
+            produit_parent_id,
             photos,
             created_at
         )
         VALUES
         (
+            ?,
+            ?,
+            ?,
             ?,
             ?,
             ?,
@@ -434,6 +440,14 @@ try {
 
         trim($_POST['codebarre']),
 
+        in_array($_POST['unite_mesure'] ?? 'piece', ['piece', 'kg', 'litre', 'carton'], true)
+            ? $_POST['unite_mesure']
+            : 'piece',
+
+        in_array($_POST['mode_vente'] ?? 'unite', ['unite', 'poids', 'volume'], true)
+            ? $_POST['mode_vente']
+            : 'unite',
+
         $_POST['prix_achat'],
 
         $_POST['prix_vente'],
@@ -448,10 +462,25 @@ try {
 
         $_POST['categorie_id'] ?: null,
 
+        ((int)($_POST['produit_parent_id'] ?? 0) > 0)
+            ? (int)$_POST['produit_parent_id']
+            : null,
+
         $photos
     ]);
 
     $produit_id = $pdo->lastInsertId();
+
+    $lot = $pdo->prepare('INSERT INTO lots_produits (produit_id, magasin_id, numero_lot, quantite_initiale, quantite_restante, prix_achat, date_expiration) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $lot->execute([
+        $produit_id,
+        $magasin_id,
+        trim((string)($_POST['numero_lot'] ?? '')) ?: null,
+        (float)$_POST['quantite'],
+        (float)$_POST['quantite'],
+        (float)$_POST['prix_achat'],
+        $_POST['date_peremption'] ?: null,
+    ]);
 
     ajouterHistorique(
 
@@ -594,6 +623,8 @@ try {
 
             nom=?,
             codebarre=?,
+            unite_mesure=?,
+            mode_vente=?,
             prix_achat=?,
             prix_vente=?,
             quantite=?,
@@ -601,6 +632,7 @@ try {
             date_peremption=?,
             fournisseur_id=?,
             categorie_id=?,
+            produit_parent_id=?,
             photos=?
 
         WHERE id=?
@@ -612,6 +644,14 @@ try {
         trim($_POST['nom']),
 
         trim($_POST['codebarre']),
+
+        in_array($_POST['unite_mesure'] ?? 'piece', ['piece', 'kg', 'litre', 'carton'], true)
+            ? $_POST['unite_mesure']
+            : 'piece',
+
+        in_array($_POST['mode_vente'] ?? 'unite', ['unite', 'poids', 'volume'], true)
+            ? $_POST['mode_vente']
+            : 'unite',
 
         $_POST['prix_achat'],
 
@@ -626,6 +666,10 @@ try {
         $_POST['fournisseur_id'] ?: null,
 
         $_POST['categorie_id'] ?: null,
+
+        ((int)($_POST['produit_parent_id'] ?? 0) > 0 && (int)$_POST['produit_parent_id'] !== (int)$_POST['id'])
+            ? (int)$_POST['produit_parent_id']
+            : null,
 
         $photos,
 
@@ -1478,6 +1522,24 @@ class="border-2 border-gray-200 p-4 rounded-2xl w-full">
 </div>
 
 <div>
+<label class="font-semibold block mb-2">Unité de mesure</label>
+<select name="unite_mesure" class="border-2 border-gray-200 p-4 rounded-2xl w-full">
+<?php foreach(['piece' => 'Pièce', 'kg' => 'Kilogramme', 'litre' => 'Litre', 'carton' => 'Carton'] as $value => $label): ?>
+<option value="<?= $value ?>" <?= ($editProduct['unite_mesure'] ?? 'piece') === $value ? 'selected' : '' ?>><?= $label ?></option>
+<?php endforeach; ?>
+</select>
+</div>
+
+<div>
+<label class="font-semibold block mb-2">Mode de vente</label>
+<select name="mode_vente" class="border-2 border-gray-200 p-4 rounded-2xl w-full">
+<?php foreach(['unite' => 'À l’unité', 'poids' => 'Au poids', 'volume' => 'Au volume'] as $value => $label): ?>
+<option value="<?= $value ?>" <?= ($editProduct['mode_vente'] ?? 'unite') === $value ? 'selected' : '' ?>><?= $label ?></option>
+<?php endforeach; ?>
+</select>
+</div>
+
+<div>
 <label class="font-semibold block mb-2">
 Prix achat
 </label>
@@ -1512,10 +1574,16 @@ Quantité
 
 <input
 type="number"
+step="0.001"
 name="quantite"
 required
 value="<?= e($editProduct['quantite'] ?? 0) ?>"
 class="border-2 border-gray-200 p-4 rounded-2xl w-full">
+</div>
+
+<div>
+<label class="font-semibold block mb-2">Numéro de lot initial</label>
+<input type="text" name="numero_lot" value="" placeholder="Ex. LOT-2026-001" class="border-2 border-gray-200 p-4 rounded-2xl w-full">
 </div>
 
 <div>
@@ -1541,6 +1609,18 @@ type="date"
 name="date_peremption"
 value="<?= e($editProduct['date_peremption'] ?? '') ?>"
 class="border-2 border-gray-200 p-4 rounded-2xl w-full">
+</div>
+
+<div>
+<label class="font-semibold block mb-2">Variante d’un produit</label>
+<select name="produit_parent_id" class="border-2 border-gray-200 p-4 rounded-2xl w-full">
+<option value="">Produit principal</option>
+<?php foreach($produits as $parent): ?>
+<?php if((int)$parent['id'] !== (int)($editProduct['id'] ?? 0)): ?>
+<option value="<?= (int)$parent['id'] ?>" <?= ((int)($editProduct['produit_parent_id'] ?? 0) === (int)$parent['id']) ? 'selected' : '' ?>><?= e($parent['nom']) ?> - <?= e($parent['codebarre']) ?></option>
+<?php endif; ?>
+<?php endforeach; ?>
+</select>
 </div>
 
 <div>

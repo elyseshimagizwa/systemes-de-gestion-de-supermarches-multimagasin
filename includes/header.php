@@ -266,10 +266,10 @@ $sessionToken =
 
 <link rel="stylesheet" href="<?= e($assetBasePath) ?>/tailwind.css">
 
-<link
-rel="stylesheet"
-href="<?= e($assetBasePath) ?>/vendor/fontawesome.min.css"
-/>
+<?php
+require_once __DIR__ . '/icons.php';
+renderIconAssets($assetBasePath . '/vendor/fontawesome.min.css');
+?>
 
 <script>
 

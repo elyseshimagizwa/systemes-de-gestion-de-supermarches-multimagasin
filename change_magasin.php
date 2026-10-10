@@ -13,11 +13,12 @@ $user = currentUser();
 
 if(!isAdmin()){
 
-    exit("
-    <div style='padding:30px;font-family:sans-serif'>
-        ⛔ Accès refusé
-    </div>
-    ");
+    if (($user['role'] ?? '') === 'client') {
+        denyClientBackofficeAccess();
+    }
+
+    http_response_code(403);
+    exit("<div style='padding:30px;font-family:sans-serif'>⛔ Accès refusé</div>");
 }
 
 /* =========================================================

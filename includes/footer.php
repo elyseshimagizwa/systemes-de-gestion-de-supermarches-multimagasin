@@ -1,346 +1,380 @@
+
 <?php
 require_once __DIR__ . '/../config.php';
-requireLogin();
 
-$user = currentUser();
+$user     = currentUser();
 $settings = getSettings();
 
-/* ================= MULTI MAGASIN ================= */
+/* =========================================================
+   MULTI-MAGASIN
+   ========================================================= */
 
-$magasinNom = "Magasin Principal";
-$magasinAdresse = $settings['adresse'] ?? '';
+$magasinNom       = "Magasin Principal";
+$magasinAdresse   = $settings['adresse'] ?? '';
 $magasinTelephone = $settings['telephone'] ?? '';
 
-if(currentMagasinId() > 0){
+$magasinId = function_exists('currentMagasinId')
+    ? (int) currentMagasinId()
+    : (int) ($user['magasin_id'] ?? 0);
+
+if ($magasinId > 0) {
 
     global $pdo;
 
     $stmt = $pdo->prepare("
-        SELECT *
+        SELECT nom, adresse, telephone
         FROM magasins
-        WHERE id=?
+        WHERE id = ?
         LIMIT 1
     ");
 
-    $stmt->execute([
-        currentMagasinId()
-    ]);
+    $stmt->execute([$magasinId]);
 
-    $magasin = $stmt->fetch();
+    $magasin = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if($magasin){
+    if ($magasin) {
 
-        $magasinNom =
-            $magasin['nom'];
+        $magasinNom = !empty($magasin['nom'])
+            ? $magasin['nom']
+            : $magasinNom;
 
-        $magasinAdresse =
-            $magasin['adresse']
-            ?? $magasinAdresse;
+        $magasinAdresse = !empty($magasin['adresse'])
+            ? $magasin['adresse']
+            : $magasinAdresse;
 
-        $magasinTelephone =
-            $magasin['telephone']
-            ?? $magasinTelephone;
+        $magasinTelephone = !empty($magasin['telephone'])
+            ? $magasin['telephone']
+            : $magasinTelephone;
     }
 }
+
+/* =========================================================
+   INFORMATIONS
+   ========================================================= */
+
+$nomBoutique = $settings['nom_boutique']
+    ?? 'BURUNDI MARKET HUB';
+
+$email = $settings['email_admin']
+    ?? '';
+
+$telephone = $magasinTelephone
+    ?: ($settings['telephone'] ?? '');
+
+$adresse = $magasinAdresse
+    ?: ($settings['adresse'] ?? '');
+
+$logo = $settings['logo'] ?? '';
 ?>
 
-<footer class="mt-10 px-4 pb-6">
+<footer class="mt-10">
 
-    <!-- SHOPIFY FOOTER CARD -->
+    <!-- =====================================================
+         FOOTER — MÊME STYLE QUE LE HEADER
+         ===================================================== -->
 
-    <div class="
-        bg-gradient-to-r
-        from-indigo-600
-        via-violet-600
-        to-purple-600
-        rounded-[35px]
-        shadow-2xl
-        overflow-hidden
-        relative
-    ">
+    <div
+        class="
+            text-white
+            overflow-hidden
+            relative
+        "
+        style="
+            background:
+                linear-gradient(
+                    120deg,
+                    #123b2a,
+                    #27704d 58%,
+                    #d4e65c
+                );
+        "
+    >
 
-        <!-- BACKGROUND DECOR -->
-
-        <div class="
-            absolute
-            top-0
-            right-0
-            w-72
-            h-72
-            bg-white/10
-            rounded-full
-            blur-3xl
-            -mr-24
-            -mt-24
-        "></div>
-
-        <div class="
-            absolute
-            bottom-0
-            left-0
-            w-60
-            h-60
-            bg-white/10
-            rounded-full
-            blur-3xl
-            -ml-20
-            -mb-20
-        "></div>
-
-        <!-- CONTENT -->
+        <!-- =================================================
+             CONTENU
+             ================================================= -->
 
         <div class="
             relative
             z-10
             max-w-7xl
             mx-auto
-            px-6
+            px-5
+            sm:px-6
+            lg:px-8
             py-10
         ">
+
+            <!-- =================================================
+                 PARTIE PRINCIPALE
+                 ================================================= -->
 
             <div class="
                 grid
                 grid-cols-1
                 md:grid-cols-2
-                xl:grid-cols-4
+                lg:grid-cols-3
                 gap-8
             ">
 
-                <!-- BOUTIQUE -->
+                <!-- =============================================
+                     MARQUE
+                     ============================================= -->
 
                 <div>
 
-                    <div class="flex items-center gap-3 mb-4">
+                    <div class="
+                        flex
+                        items-center
+                        gap-3
+                        mb-4
+                    ">
 
-                        <?php if(!empty($settings['logo'])): ?>
+                        <?php if (!empty($logo)): ?>
 
                             <img
-                                src="<?= $settings['logo'] ?>"
+                                src="<?= e($logo) ?>"
+                                alt="<?= e($nomBoutique) ?>"
                                 class="
-                                    w-14
-                                    h-14
-                                    rounded-2xl
+                                    w-12
+                                    h-12
+                                    rounded-xl
                                     object-cover
-                                    border-2
-                                    border-white/30
+                                    bg-white
+                                    p-1
                                     shadow-lg
                                 "
                             >
+
+                        <?php else: ?>
+
+                            <div class="
+                                w-12
+                                h-12
+                                rounded-xl
+                                bg-green-950/40
+                                border
+                                border-white/20
+                                flex
+                                items-center
+                                justify-center
+                                font-black
+                                shadow-lg
+                            ">
+                                BM
+                            </div>
 
                         <?php endif; ?>
 
                         <div>
 
                             <h2 class="
-                                text-2xl
+                                text-xl
                                 font-black
-                                text-white
+                                tracking-tight
                             ">
-                                <?= e($settings['nom_boutique']) ?>
+                                <?= e($nomBoutique) ?>
                             </h2>
 
-                            <div class="
-                                text-white/80
-                                text-sm
+                            <p class="
+                                text-xs
+                                text-lime-200
+                                mt-0.5
+                                font-semibold
                             ">
-                                Shopify POS Premium
-                            </div>
+                                Gestion commerciale & POS
+                            </p>
 
                         </div>
 
                     </div>
 
                     <p class="
-                        text-white/80
-                        leading-relaxed
                         text-sm
+                        leading-6
+                        text-green-50/90
+                        max-w-md
                     ">
-
-                        Solution de caisse moderne,
-                        rapide et professionnelle
-                        avec gestion multi-magasin,
-                        ventes, stock et statistiques.
-
+                        Solution moderne de gestion des ventes,
+                        des stocks et des magasins, conçue pour
+                        simplifier votre activité commerciale.
                     </p>
 
                 </div>
 
-                <!-- MAGASIN -->
+
+                <!-- =============================================
+                     MAGASIN ACTIF
+                     ============================================= -->
 
                 <div>
 
                     <h3 class="
-                        text-white
-                        font-bold
-                        text-lg
+                        text-sm
+                        font-black
+                        uppercase
+                        tracking-widest
+                        text-lime-200
                         mb-4
                     ">
-                        🏬 Magasin actif
+                        Magasin actif
                     </h3>
 
                     <div class="
-                        bg-white/10
-                        backdrop-blur-md
-                        rounded-2xl
-                        p-4
-                        border
-                        border-white/10
+                        flex
+                        items-start
+                        gap-3
                     ">
 
                         <div class="
-                            text-white
-                            font-bold
-                            text-lg
+                            w-10
+                            h-10
+                            rounded-xl
+                            bg-green-950/40
+                            border
+                            border-white/20
+                            flex
+                            items-center
+                            justify-center
+                            shrink-0
                         ">
-                            <?= e($magasinNom) ?>
+                            🏬
                         </div>
 
-                        <div class="
-                            text-white/80
-                            text-sm
-                            mt-2
-                        ">
-                            📍
-                            <?= e($magasinAdresse) ?>
-                        </div>
+                        <div class="min-w-0">
 
-                        <div class="
-                            text-white/80
-                            text-sm
-                            mt-2
-                        ">
-                            📞
-                            <?= e($magasinTelephone) ?>
+                            <div class="
+                                font-black
+                                text-white
+                                truncate
+                            ">
+                                <?= e($magasinNom) ?>
+                            </div>
+
+                            <?php if (!empty($adresse)): ?>
+
+                                <div class="
+                                    text-sm
+                                    text-green-50/80
+                                    mt-1
+                                ">
+                                    📍 <?= e($adresse) ?>
+                                </div>
+
+                            <?php endif; ?>
+
+                            <?php if (!empty($telephone)): ?>
+
+                                <div class="
+                                    text-sm
+                                    text-green-50/80
+                                    mt-1
+                                ">
+                                    📞 <?= e($telephone) ?>
+                                </div>
+
+                            <?php endif; ?>
+
                         </div>
 
                     </div>
 
                 </div>
 
-                <!-- CONTACT -->
+
+                <!-- =============================================
+                     CONTACT
+                     ============================================= -->
 
                 <div>
 
                     <h3 class="
-                        text-white
-                        font-bold
-                        text-lg
+                        text-sm
+                        font-black
+                        uppercase
+                        tracking-widest
+                        text-lime-200
                         mb-4
                     ">
-                        📞 Contact
+                        Contact
                     </h3>
 
                     <div class="space-y-3">
 
-                        <div class="
-                            bg-white/10
-                            rounded-2xl
-                            p-4
-                            backdrop-blur-md
-                        ">
+                        <?php if (!empty($telephone)): ?>
 
-                            <div class="
-                                text-white/70
-                                text-sm
-                            ">
-                                Téléphone
-                            </div>
+                            <a
+                                href="tel:<?= e($telephone) ?>"
+                                class="
+                                    flex
+                                    items-center
+                                    gap-3
+                                    text-sm
+                                    text-green-50/90
+                                    hover:text-white
+                                    transition
+                                "
+                            >
 
-                            <div class="
-                                text-white
-                                font-bold
-                            ">
-                                <?= e($settings['telephone']) ?>
-                            </div>
+                                <span class="
+                                    w-9
+                                    h-9
+                                    rounded-xl
+                                    bg-green-950/40
+                                    border
+                                    border-white/20
+                                    flex
+                                    items-center
+                                    justify-center
+                                ">
+                                    ☎
+                                </span>
 
-                        </div>
+                                <span>
+                                    <?= e($telephone) ?>
+                                </span>
 
-                        <div class="
-                            bg-white/10
-                            rounded-2xl
-                            p-4
-                            backdrop-blur-md
-                        ">
+                            </a>
 
-                            <div class="
-                                text-white/70
-                                text-sm
-                            ">
-                                Email
-                            </div>
+                        <?php endif; ?>
 
-                            <div class="
-                                text-white
-                                break-all
-                                font-bold
-                            ">
-                                <?= e($settings['email_admin']) ?>
-                            </div>
 
-                        </div>
+                        <?php if (!empty($email)): ?>
 
-                    </div>
+                            <a
+                                href="mailto:<?= e($email) ?>"
+                                class="
+                                    flex
+                                    items-center
+                                    gap-3
+                                    text-sm
+                                    text-green-50/90
+                                    hover:text-white
+                                    transition
+                                "
+                            >
 
-                </div>
+                                <span class="
+                                    w-9
+                                    h-9
+                                    rounded-xl
+                                    bg-green-950/40
+                                    border
+                                    border-white/20
+                                    flex
+                                    items-center
+                                    justify-center
+                                ">
+                                    ✉
+                                </span>
 
-                <!-- SYSTEM -->
+                                <span class="break-all">
+                                    <?= e($email) ?>
+                                </span>
 
-                <div>
+                            </a>
 
-                    <h3 class="
-                        text-white
-                        font-bold
-                        text-lg
-                        mb-4
-                    ">
-                        ⚡ Fonctionnalités
-                    </h3>
-
-                    <div class="space-y-2">
-
-                        <div class="
-                            bg-white/10
-                            rounded-xl
-                            px-4
-                            py-3
-                            text-white
-                            text-sm
-                        ">
-                            -Systemes de gestion multi-magasin et gestion du stock
-                        </div>
-
-                        <div class="
-                            bg-white/10
-                            rounded-xl
-                            px-4
-                            py-3
-                            text-white
-                            text-sm
-                        ">
-                            - impression des facture thermiques
-                        </div>
-
-                        <div class="
-                            bg-white/10
-                            rounded-xl
-                            px-4
-                            py-3
-                            text-white
-                            text-sm
-                        ">
-                            - Travailles en Mode hors ligne
-                        </div>
-
-                        <div class="
-                            bg-white/10
-                            rounded-xl
-                            px-4
-                            py-3
-                            text-white
-                            text-sm
-                        ">
-                            - Scanner code barre lors de la vente via les camera externes brncher sur l'ordinateur
-                        </div>
+                        <?php endif; ?>
 
                     </div>
 
@@ -348,91 +382,104 @@ if(currentMagasinId() > 0){
 
             </div>
 
-            <!-- BOTTOM -->
+
+            <!-- =================================================
+                 SEPARATION
+                 ================================================= -->
 
             <div class="
+                mt-8
+                pt-6
                 border-t
                 border-white/20
-                mt-10
-                pt-6
                 flex
                 flex-col
                 md:flex-row
-                justify-between
                 items-center
+                justify-between
                 gap-4
             ">
 
+                <!-- =============================================
+                     COPYRIGHT
+                     ============================================= -->
+
                 <div class="
-                    text-white/80
-                    text-sm
+                    text-xs
+                    text-green-50/75
+                    text-center
+                    md:text-left
                 ">
 
                     © <?= date('Y') ?>
 
-                    <?= e($settings['nom_boutique']) ?>
+                    <span class="
+                        text-white
+                        font-bold
+                    ">
+                        <?= e($nomBoutique) ?>
+                    </span>
 
-                    • Tous droits réservés
+                    · Tous droits réservés.
 
                 </div>
 
-                <!-- USER / MAGASIN -->
+
+                <!-- =============================================
+                     MAGASIN
+                     ============================================= -->
 
                 <div class="
-                    flex
-                    flex-wrap
+                    inline-flex
                     items-center
-                    gap-3
+                    gap-2
+                    px-4
+                    py-2
+                    rounded-full
+                    bg-green-950/40
+                    border
+                    border-white/20
+                    text-xs
+                    text-white
+                    backdrop-blur-sm
                 ">
 
+                    <span class="
+                        w-2
+                        h-2
+                        rounded-full
+                        bg-lime-300
+                    "></span>
 
-                    <div class="
-                        bg-emerald-500/20
-                        border
-                        border-emerald-300/20
-                        px-4
-                        py-2
-                        rounded-xl
-                        text-emerald-100
-                        text-sm
-                    ">
-
-                        🏬
-                        <?= e($magasinNom) ?>
-
-                    </div>
+                    <?= e($magasinNom) ?>
 
                 </div>
 
-            </div>
 
-            <!-- DESIGN -->
-
-            <div class="
-                text-center
-                mt-8
-            ">
+                <!-- =============================================
+                     DEVELOPPEUR
+                     ============================================= -->
 
                 <a
                     href="https://elyseshimagizwa.infinityfreeapp.com/?i=1"
                     target="_blank"
+                    rel="noopener noreferrer"
                     class="
-                        inline-flex
-                        items-center
-                        gap-2
-                        bg-black/20
-                        hover:bg-black/30
+                        text-xs
+                        text-green-50/70
+                        hover:text-white
                         transition
-                        px-5
-                        py-3
-                        rounded-2xl
-                        text-yellow-300
-                        font-bold
-                        shadow-lg
                     "
                 >
 
-                    💻 DESIGN BY CABINET INFORMATIQUE SHIMEL
+                    Développé par
+
+                    <span class="
+                        text-white
+                        font-bold
+                    ">
+                     SHIMEL DEV TECH
+                    </span>
 
                 </a>
 

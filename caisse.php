@@ -21,6 +21,10 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 
 $user = currentUser();
 
+if (($user['role'] ?? '') === 'client') {
+    denyClientBackofficeAccess();
+}
+
 $isAdmin =
     ($user['role'] ?? '') === 'admin';
 
@@ -116,14 +120,14 @@ if (!$magasin) {
 $stmt = $pdo->prepare("
     SELECT id
 FROM sessions_caisse
-WHERE utilisateur_id=?
+WHERE caisse_id=?
 AND magasin_id=?
 AND statut='ouverte'
 LIMIT 1
 ");
 
 $stmt->execute([
-    (int)$user['id'],
+    (int)(currentCaisseId($magasin_id) ?? 0),
     $magasin_id
 ]);
 
@@ -244,37 +248,17 @@ if (
             );
         }
 
+        $requestedQuantities = normalizeSaleQuantities($items);
+
         $pdo->beginTransaction();
 
         $totalHT = 0;
 
         $validatedItems = [];
 
-        foreach ($items as $it) {
+        foreach ($requestedQuantities as $produit_id => $requestedQty) {
 
-            $produit_id =
-                secureInt($it['id'] ?? 0);
-
-            $qty =
-                secureInt($it['qty'] ?? 0);
-
-            if (
-                $produit_id <= 0
-                ||
-                $qty <= 0
-            ) {
-
-                throw new Exception(
-                    "Produit invalide"
-                );
-            }
-
-            if ($qty > 10000) {
-
-                throw new Exception(
-                    "Quantité trop élevée"
-                );
-            }
+            $qty = round($requestedQty, 3);
 
             $q = $pdo->prepare("
                 SELECT
@@ -282,7 +266,9 @@ if (
                     nom,
                     prix_vente,
                     quantite,
-                    magasin_id
+                    magasin_id,
+                    unite_mesure,
+                    mode_vente
                 FROM produits
                 WHERE id=?
                 AND magasin_id=?
@@ -306,7 +292,7 @@ if (
             }
 
             $stock =
-                secureInt($p['quantite']);
+                round((float)$p['quantite'], 3);
 
             if ($stock < $qty) {
 
@@ -340,9 +326,6 @@ if (
                 'prix_vente' => $prix,
 
                 'ancien_stock' => $stock,
-
-                'nouveau_stock' =>
-                    $stock - $qty,
 
                 'sous_total' => $sousTotal
             ];
@@ -378,11 +361,14 @@ if (
                 )
             );
 
+        $numeroTicket = generateTicketNumber();
         $stmt = $pdo->prepare("
             INSERT INTO ventes
             (
+                numero_ticket,
                 utilisateur_id,
                 magasin_id,
+                caisse_id,
                 session_caisse_id,
                 total,
                 montant_recu,
@@ -400,21 +386,21 @@ if (
                 ?,
                 ?,
                 ?,
+                ?,
+                ?,
                 NOW(),
                 ?
             )
         ");
-        mail(
-    "mcshimel4@gmail.com",
-    "Nouvelle vente",
-    "Une nouvelle vente vient d'être enregistrée"
-);
 
         $stmt->execute([
+
+            $numeroTicket,
 
             secureInt($user['id']),
 
             $magasin_id,
+            (int)(currentCaisseId($magasin_id) ?? 0),
             $session['id'],
 
             $totalTTC,
@@ -438,19 +424,25 @@ if (
             $updateStock =
                 $pdo->prepare("
                     UPDATE produits
-                    SET quantite=?
+                    SET quantite=quantite-?
                     WHERE id=?
                     AND magasin_id=?
+                    AND quantite>=?
                 ");
 
             $updateStock->execute([
 
-                $item['nouveau_stock'],
+                $item['qty'],
 
                 $item['id'],
 
-                $magasin_id
+                $magasin_id,
+
+                $item['qty']
             ]);
+            if ($updateStock->rowCount() !== 1) {
+                throw new Exception("Le stock du magasin actif n'a pas pu être mis à jour");
+            }
 
             $ligne =
                 $pdo->prepare("
@@ -484,6 +476,14 @@ if (
 
                 $item['sous_total']
             ]);
+
+            consumeProductLots(
+                $pdo,
+                (int)$item['id'],
+                $magasin_id,
+                (float)$item['qty'],
+                (int)$pdo->lastInsertId()
+            );
 
             $stockHistory =
                 $pdo->prepare("
@@ -523,7 +523,7 @@ if (
 
                 $item['ancien_stock'],
 
-                $item['nouveau_stock'],
+                $item['ancien_stock'] - $item['qty'],
 
                 'Vente caisse',
 
@@ -531,7 +531,7 @@ if (
             ]);
 
             if (
-                $item['nouveau_stock']
+                $item['ancien_stock'] - $item['qty']
                 <= 5
             ) {
 
@@ -567,6 +567,7 @@ if (
                 (
                     utilisateur_id,
                     magasin_id,
+                    caisse_id,
                     action,
                     details,
                     ip,
@@ -575,6 +576,7 @@ if (
                 )
                 VALUES
                 (
+                    ?,
                     ?,
                     ?,
                     ?,
@@ -590,6 +592,8 @@ if (
             secureInt($user['id']),
 
             $magasin_id,
+
+            (int)(currentCaisseId($magasin_id) ?? 0),
 
             'VENTE',
 
@@ -623,7 +627,7 @@ if (
         session_regenerate_id(true);
 
         header(
-            "Location: ticket_pdf.php?id="
+            "Location: ticket_pdf.php?ticket="
             .$venteId
         );
 
@@ -701,7 +705,10 @@ if (
             nom,
             prix_vente,
             quantite,
-            codebarre
+            codebarre,
+            unite_mesure,
+            mode_vente,
+            photos
         FROM produits
         WHERE quantite > 0
         AND magasin_id=?
@@ -834,14 +841,14 @@ $venteMoyenneAffiche =
 $sessionStats = $pdo->prepare("
     SELECT *
     FROM sessions_caisse
-    WHERE utilisateur_id=?
+    WHERE caisse_id=?
     AND magasin_id=?
     AND statut='ouverte'
     LIMIT 1
 ");
 
 $sessionStats->execute([
-    $user['id'],
+    (int)(currentCaisseId($magasin_id) ?? 0),
     $magasin_id
 ]);
 
@@ -1001,7 +1008,7 @@ body{
 .product-card{
     background:white;
     border-radius:22px;
-    padding:18px;
+    padding:12px;
     transition:.2s;
     border:1px solid #e5e7eb;
 }
@@ -1015,6 +1022,21 @@ body{
 .product-price{
     color:#16a34a;
     font-weight:bold;
+}
+
+.product-image{
+    width:100%;
+    height:150px;
+    object-fit:cover;
+    border-radius:16px;
+    background:#f3f4f6;
+}
+
+.product-image-placeholder{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:2.5rem;
 }
 
 .cart-item{
@@ -1526,6 +1548,24 @@ let cart = [];
 let produits = [];
 let currentPage = 1;
 let loadingProducts = false;
+
+function productImage(product){
+
+    let photos = [];
+
+    try {
+        photos = Array.isArray(product.photos)
+            ? product.photos
+            : JSON.parse(product.photos || '[]');
+    } catch (error) {
+        photos = [];
+    }
+
+    return Array.isArray(photos) && photos.length > 0
+        ? photos[0]
+        : '';
+}
+
 /*Ajouter le Lazy Loading*/
 async function loadProducts(){
 
@@ -1550,6 +1590,8 @@ async function loadProducts(){
 
     data.forEach(p=>{
 
+        const image = productImage(p);
+
         html += `
         <button
             type="button"
@@ -1558,7 +1600,11 @@ async function loadProducts(){
             class="product-card text-left"
         >
 
-            <div class="text-lg font-bold text-slate-800">
+            ${image
+                ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(p.nom)}" class="product-image" loading="lazy" decoding="async">`
+                : `<div class="product-image product-image-placeholder">📦</div>`}
+
+            <div class="mt-3 text-lg font-bold text-slate-800">
 
                 ${p.nom}
 
@@ -1671,7 +1717,7 @@ function addItem(p){
             return;
         }
 
-        found.qty++;
+        found.qty = Math.min(found.quantite, +(found.qty + found.step).toFixed(3));
 
     }else{
 
@@ -1680,9 +1726,12 @@ function addItem(p){
             id:p.id,
             nom:p.nom,
             prix_vente:parseFloat(p.prix_vente),
-            quantite:parseInt(p.quantite),
+            quantite:parseFloat(p.quantite),
             qty:1,
-            codebarre:p.codebarre
+            step:(p.mode_vente === 'unite' ? 1 : 0.001),
+            unite_mesure:p.unite_mesure || 'piece',
+            codebarre:p.codebarre,
+            image:productImage(p)
         });
     }
 
@@ -1712,7 +1761,7 @@ function increaseQty(index){
         return;
     }
 
-    cart[index].qty++;
+    cart[index].qty = Math.min(cart[index].quantite, +(cart[index].qty + cart[index].step).toFixed(3));
 
     render();
 }
@@ -1732,6 +1781,16 @@ function decreaseQty(index){
         cart.splice(index,1);
     }
 
+    render();
+}
+
+function setQty(index, value){
+    const quantity = parseFloat(value);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+        cart.splice(index, 1);
+    } else {
+        cart[index].qty = Math.min(cart[index].quantite, +quantity.toFixed(3));
+    }
     render();
 }
 
@@ -1840,6 +1899,14 @@ function render(){
 
             <div class="flex justify-between gap-3">
 
+                <div class="w-16 h-16 flex-shrink-0">
+
+                    ${i.image
+                        ? `<img src="${escapeHtml(i.image)}" alt="${escapeHtml(i.nom)}" class="w-16 h-16 object-cover rounded-xl" loading="lazy">`
+                        : `<div class="w-16 h-16 rounded-xl bg-gray-200 flex items-center justify-center text-2xl">📦</div>`}
+
+                </div>
+
                 <div class="flex-1">
 
                     <div class="font-bold text-lg">
@@ -1868,11 +1935,15 @@ function render(){
 
                         </button>
 
-                        <div class="px-4 py-2 bg-gray-100 rounded-xl font-bold">
-
-                            ${i.qty}
-
-                        </div>
+                        <input
+                            type="number"
+                            min="0.001"
+                            max="${i.quantite}"
+                            step="${i.step}"
+                            value="${i.qty}"
+                            onchange="setQty(${index}, this.value)"
+                            class="w-24 rounded-xl bg-gray-100 px-3 py-2 text-center font-bold"
+                        >
 
                         <button
                             type="button"

@@ -64,6 +64,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['retour'])) {
 
         $pdo->prepare("UPDATE produits SET quantite=? WHERE id=? AND magasin_id=?")->execute([$new,$produit_id,currentMagasinId()]);
 
+        $lot = $pdo->prepare('INSERT INTO lots_produits (produit_id, magasin_id, numero_lot, quantite_initiale, quantite_restante, prix_achat, date_expiration) SELECT id, ?, ?, ?, ?, prix_achat, date_peremption FROM produits WHERE id=? AND magasin_id=?');
+        $lot->execute([currentMagasinId(), 'RETOUR-' . $vente_id . '-' . $produit_id, (float)$quantite, (float)$quantite, $produit_id, currentMagasinId()]);
+
         // retour
         $pdo->prepare("INSERT INTO retours (vente_id,produit_id,quantite,motif) VALUES (?,?,?,?)")
             ->execute([$vente_id,$produit_id,$quantite,$motif]);

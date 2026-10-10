@@ -1,0 +1,199 @@
+Project de gestion supermarcher/amelioration recommandes
+État actuel
+Ton système est déjà une base avancée de gestion de supermarché multi-magasins. Il couvre beaucoup de fonctions importantes : caisse, stocks, achats, transferts, fournisseurs, commandes clients, rapports et sécurité.
+Cependant, je le classerais comme un prototype avancé ou une version pré-production, pas encore comme un système totalement prêt pour un usage professionnel intensif. Les principales améliorations concernent la fiabilité, la traçabilité, les permissions et la maintenance.
+
+Améliorations prioritaires
+1.Inventaire complet
+o	Créer des sessions d’inventaire par magasin.
+o	Scanner ou saisir les produits comptés.
+o	Comparer stock théorique et stock réel.
+o	Faire valider les écarts par un administrateur.
+o	Enregistrer automatiquement les corrections dans stock_mouvements.
+
+
+2.Gestion avancée des produits
+o	Ajouter les lots, numéros de lot et dates d’expiration.
+o	Appliquer la méthode FIFO: vendre d’abord les produits les plus anciens.
+o	Gérer les produits vendus à l’unité, au poids ou au volume.
+o	Ajouter les unités de mesure: kg, litre, carton, pièce.
+o	Ajouter des variantes de produits.
+
+
+fimition. en haut<<<
+
+3.Amélioration des commandes fournisseurs
+o	Autoriser les réceptions partielles.
+o	Enregistrer les quantités commandées, reçues et restantes.
+o	Gérer les produits manquants ou endommagés.
+o	Comparer automatiquement le prix prévu et le prix reçu.
+o	Ajouter un bon de réception imprimable.
+
+4.Workflow des commandes clients
+o	Définir clairement les transitions autorisées entre statuts.
+o	Ajouter une réservation temporaire du stock.
+o	Libérer automatiquement le stock des commandes expirées.
+o	Empêcher une commande déjà annulée d’être annulée une deuxième fois.
+o	Ajouter un historique complet des changements de statut.
+o	Ajouter un délai de retrait configurable.
+5.Retours et annulations
+o	Ajouter un motif obligatoire.
+o	Distinguer retour accepté, retour refusé et produit défectueux.
+o	Relier chaque retour à une opération financière.
+o	Prévoir l’autorisation d’un responsable pour les annulations.
+o	Empêcher les modifications directes d’une vente clôturée.
+
+
+6.Permissions plus précises
+Actuellement, les rôles admin et caissier sont insuffisants pour une grande structure. Ajouter par exemple:
+o	responsable de magasin;
+o	gestionnaire de stock;
+o	acheteur;
+o	comptable;
+o	auditeur;
+o	préparateur de commandes.
+Les droits devraient être définis par action: consulter, créer, modifier, supprimer, valider ou exporter.
+
+
+7.Sécurité de production
+o	Remplacer le compte MySQL root sans mot de passe dans config.php.
+o	Déplacer les identifiants dans des variables d’environnement.
+o	Supprimer les adresses email codées en dur dans caisse.php.
+o	Renforcer la politique CSP et supprimer progressivement unsafe-inline.
+o	Ajouter une limitation de taille et de type réelle pour tous les fichiers uploadés.
+o	Vérifier que les logs de sécurité ne sont visibles que par les administrateurs.
+o	Ajouter une authentification à deux facteurs pour les administrateurs.
+
+8.Sauvegardes
+o	Chiffrer les sauvegardes.
+o	Protéger les fichiers de sauvegarde par un emplacement extérieur au dossier public.
+o	Tester automatiquement la restauration.
+o	Ajouter une vérification d’intégrité.
+o	Corriger la génération du nom de fichier dans backup.php.
+o	Ajouter une confirmation forte avant restauration.
+o	Conserver plusieurs versions avec politique de rétention.
+
+9.Rapports de gestion
+Ajouter:
+o	marge par produit;
+o	rotation du stock;
+o	produits dormants;
+o	ventes par heure;
+o	prévisions de rupture;
+o	comparaison entre périodes;
+o	bénéfice net après dépenses;
+o	performance de chaque magasin;
+o	performance des fournisseurs;
+o	valeur totale du stock.
+
+
+10.Architecture et maintenance
+Le code PHP procédural fonctionne, mais les pages mélangent actuellement affichage, requêtes SQL et logique métier. Il faudrait progressivement créer:
+•	une couche services;
+•	une couche repositories;
+•	des fonctions métier centralisées;
+•	des validations communes;
+•	des réponses JSON standardisées pour AJAX.
+Cela réduira les duplications et les erreurs lors des prochaines évolutions.
+
+
+11.Tests automatisés
+Ajouter des tests pour:
+•	séparation entre magasins;
+•	vente avec stock insuffisant;
+•	vente concurrente du même produit;
+•	fermeture de caisse;
+•	retour partiel;
+•	annulation de commande;
+•	réception partielle fournisseur;
+•	permissions par rôle;
+•	sauvegarde et restauration.
+
+
+
+
+12.Performance et fiabilité
+•	Ajouter des index sur les colonnes souvent filtrées.
+•	Mettre en cache les indicateurs du tableau de bord.
+•	Éviter les appels email synchrones pendant une vente.
+•	Ajouter des logs applicatifs structurés.
+•	Prévoir une file d’attente pour emails et notifications.
+•	Ajouter une page de santé du système: base de données, espace disque, sauvegardes, email.
+
+
+Ordre conseillé pour l'amélioration
+
+Phase 0 - Préparer et sauvegarder
+1.	Faire une sauvegarde complète de la base de données et des fichiers.
+2.	Créer une base de test séparée.
+3.	Documenter les règles métier existantes et les données importantes.
+
+Phase 1 - Sécurité et intégrité des données
+4.	Remplacer le compte MySQL root sans mot de passe.
+5.	Déplacer les identifiants dans des variables d'environnement.
+6.	Vérifier l'isolation des données par magasin dans toutes les pages et tous les exports.
+7.	Ajouter les contraintes, index et validations nécessaires dans la base de données.
+8.	Corriger les opérations sensibles exécutées par GET et appliquer CSRF sur les POST.
+9.	Sécuriser les uploads, les logs de sécurité et les sauvegardes.
+
+Phase 2 - Tests fondamentaux multi-magasins
+10.	Tester qu'un caissier ne peut voir ni modifier un autre magasin.
+11.	Tester les ventes, stocks, caisses, transferts et rapports avec deux magasins.
+12.	Tester les accès directs aux pages et les permissions existantes.
+
+Phase 3 - Inventaire et fiabilité du stock
+13.	Créer des sessions d'inventaire par magasin.
+14.	Comparer le stock théorique au stock réellement compté.
+15.	Faire valider les écarts par un responsable.
+16.	Enregistrer toutes les corrections dans stock_mouvements.
+17.	Empêcher les stocks négatifs et sécuriser les ventes concurrentes.
+18.	Ajouter les unités de mesure, les lots et les dates d'expiration.
+19.	Ajouter FIFO uniquement après la stabilisation des lots.
+
+Phase 4 - Commandes fournisseurs et transferts
+20.	Ajouter les réceptions partielles.
+21.	Suivre les quantités commandées, reçues, restantes, manquantes ou endommagées.
+22.	Comparer les prix prévus et reçus.
+23.	Créer un bon de réception imprimable.
+24.	Fiabiliser les statuts et la réception des transferts inter-magasins.
+
+Phase 5 - Retours, annulations et commandes clients
+25.	Rendre le motif obligatoire pour les retours et annulations.
+26.	Relier chaque retour à un remboursement ou à une opération financière.
+27.	Autoriser les annulations selon le rôle et le montant.
+28.	Définir les transitions valides des commandes clients.
+29.	Ajouter la réservation temporaire et la libération automatique du stock.
+30.	Empêcher les doubles annulations et conserver l'historique des statuts.
+
+Phase 6 - Permissions avancées
+31.	Ajouter les rôles responsable de magasin, gestionnaire de stock, acheteur, comptable, auditeur et préparateur.
+32.	Définir les droits par action : consulter, créer, modifier, valider, annuler et exporter.
+
+Phase 7 - Tests automatisés
+33.	Tester les ventes avec stock insuffisant et les ventes concurrentes.
+34.	Tester l'ouverture et la fermeture de caisse.
+35.	Tester les retours, annulations, transferts et réceptions partielles.
+36.	Tester les permissions, les sauvegardes et la restauration.
+
+Phase 8 - Rapports et performance
+37.	Ajouter la marge, la rotation du stock, les produits dormants et la valeur du stock.
+38.	Ajouter les comparaisons entre périodes et entre magasins.
+39.	Ajouter les prévisions de rupture et la performance des fournisseurs.
+40.	Mettre en cache les indicateurs et déplacer les emails dans une file d'attente.
+41.	Créer une page de santé du système.
+
+Phase 9 - Architecture et maintenance
+42.	Centraliser progressivement les validations et les opérations métier.
+43.	Créer des services et repositories pour les modules les plus sensibles.
+44.	Standardiser les réponses JSON utilisées par AJAX.
+45.	Réduire progressivement le code dupliqué dans les pages PHP.
+
+Phase 10 - Déploiement progressif
+46.	Déployer d'abord dans un seul magasin pilote.
+47.	Comparer les stocks, les ventes et les caisses avec les contrôles manuels.
+48.	Former les utilisateurs et corriger les écarts.
+49.	Déployer ensuite dans les autres magasins.
+50.	Activer les fonctions avancées après validation du fonctionnement quotidien.
+Les améliorations déjà mentionnées dans la section 14 de RAPPORT_PROJET_SUPERMARCHE.md sont pertinentes. Les plus urgentes sont toutefois l’inventaire validé, les réceptions partielles, les contraintes de base de données, les permissions détaillées, les sauvegardes sécurisées et les tests automatisés.
+
+ 
