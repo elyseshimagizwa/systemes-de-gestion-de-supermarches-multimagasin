@@ -9,61 +9,108 @@ require_once __DIR__ . '/includes/client-orders.php';
 $errors = [];
 $success = $_SESSION['client_order_success'] ?? null;
 unset($_SESSION['client_order_success']);
-if (empty($_SESSION['checkout_token'])) {
-    $_SESSION['checkout_token'] = bin2hex(random_bytes(32));
-}
-$magasinId = 0;
-$paymentMethod = '';
-$old = ['nom' => '', 'email' => ''];
-
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+if (empty($_SESSION['checkout_token'])) {
+    $_SESSION['checkout_token'] = bin2hex(random_bytes(32));
+}
+$magasinId = (int)($_SESSION['client_checkout_store'] ?? 0);
+$paymentMethod = '';
+$old = ['nom' => '', 'email' => ''];
 
 if (!isset($_SESSION['client_cart']) || !is_array($_SESSION['client_cart'])) {
     $_SESSION['client_cart'] = [];
 }
 
 $clientUser = currentUser();
+$isLoggedIn = isLoggedIn();
 $settings = getSettings();
 $isClientLoggedIn = ($clientUser['role'] ?? '') === 'client';
+$clientAccountActive = false;
 if ($isClientLoggedIn) {
-    $old = ['nom' => $clientUser['nom'], 'email' => $clientUser['email']];
+    $old = ['nom' => (string)($clientUser['nom'] ?? ''), 'email' => (string)($clientUser['email'] ?? '')];
 }
 
 try {
     $roleColumn = $pdo->query("SHOW COLUMNS FROM utilisateurs LIKE 'role'")->fetch();
-    if ($roleColumn && strpos((string)$roleColumn['Type'], "'client'") === false) {
-        $pdo->exec("ALTER TABLE utilisateurs MODIFY role enum('admin','caissier','client') NOT NULL DEFAULT 'caissier'");
+    if (!$roleColumn || (strpos((string)$roleColumn['Type'], 'enum(') === 0 && strpos((string)$roleColumn['Type'], "'client'") === false)) {
+        $errors[] = 'La base des comptes clients n’est pas à jour. Appliquez la migration 002_commandes_clients.sql.';
     }
-    $pdo->exec("CREATE TABLE IF NOT EXISTS commandes_clients (
-        id int NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        numero varchar(40) NOT NULL UNIQUE,
-        utilisateur_id int NOT NULL,
-        magasin_id int NOT NULL,
-        total decimal(12,2) NOT NULL DEFAULT 0.00,
-        statut varchar(30) NOT NULL DEFAULT 'En attente',
-        mode_paiement varchar(40) NOT NULL DEFAULT 'Paiement au retrait',
-        date_commande timestamp NOT NULL DEFAULT current_timestamp(),
-        KEY idx_client_orders_user (utilisateur_id),
-        KEY idx_client_orders_store (magasin_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
-    $pdo->exec("CREATE TABLE IF NOT EXISTS lignes_commandes_clients (
-        id int NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        commande_id int NOT NULL,
-        produit_id int NOT NULL,
-        nom_produit varchar(150) NOT NULL,
-        quantite int NOT NULL,
-        prix_unitaire decimal(10,2) NOT NULL,
-        sous_total decimal(12,2) NOT NULL,
-        KEY idx_client_order_lines_order (commande_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
-        $paymentColumn = $pdo->query("SHOW COLUMNS FROM commandes_clients LIKE 'mode_paiement'")->fetch();
-        if (!$paymentColumn) {
-            $pdo->exec("ALTER TABLE commandes_clients ADD COLUMN mode_paiement varchar(40) NOT NULL DEFAULT 'Paiement au retrait' AFTER statut");
+
+    $requiredOrderColumns = [
+        'commandes_clients' => ['numero', 'code_retrait', 'utilisateur_id', 'magasin_id', 'total', 'statut', 'mode_paiement'],
+        'lignes_commandes_clients' => ['commande_id', 'produit_id', 'nom_produit', 'quantite', 'prix_unitaire', 'sous_total'],
+        'historique_commandes_clients' => ['commande_id', 'nouveau_statut', 'utilisateur_id', 'commentaire'],
+        'notifications_clients' => ['utilisateur_id', 'commande_id', 'titre', 'message'],
+    ];
+    foreach ($requiredOrderColumns as $table => $requiredColumns) {
+        $columns = $pdo->query("SHOW COLUMNS FROM `$table`")->fetchAll(PDO::FETCH_COLUMN);
+        if (array_diff($requiredColumns, $columns)) {
+            throw new RuntimeException('Structure de commandes incomplète : ' . $table);
         }
+    }
 } catch (Throwable $exception) {
-    $errors[] = 'Le catalogue client ne peut pas initialiser sa structure de commandes.';
+    error_log('Structure commandes client : ' . $exception->getMessage());
+    $errors[] = 'La base des commandes en ligne n’est pas à jour. Appliquez les migrations 002, 004 et 008 avant de commander.';
+}
+
+if ($isClientLoggedIn) {
+    try {
+        $accountStmt = $pdo->prepare("SELECT id FROM utilisateurs WHERE id=? AND role='client' AND statut='actif' AND COALESCE(force_logout,0)=0 LIMIT 1");
+        $accountStmt->execute([(int)$clientUser['id']]);
+        $clientAccountActive = (bool)$accountStmt->fetchColumn();
+        if (!$clientAccountActive) {
+            $errors[] = 'Ce compte client est inactif ou suspendu. Déconnectez-vous puis reconnectez-vous, ou contactez un administrateur.';
+        }
+    } catch (Throwable $exception) {
+        error_log('Vérification compte client : ' . $exception->getMessage());
+        $errors[] = 'Impossible de vérifier le compte client pour commander. Réessayez plus tard ou contactez un administrateur.';
+    }
+}
+
+$parseCart = static function (string $cartJson): array {
+    try {
+        $postedCart = json_decode($cartJson, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        throw new RuntimeException('Le panier transmis est invalide.');
+    }
+    if (!is_array($postedCart) || count($postedCart) > 100) {
+        throw new RuntimeException('Panier invalide (100 produits maximum).');
+    }
+
+    $cart = [];
+    foreach ($postedCart as $productId => $quantity) {
+        if (!ctype_digit((string)$productId) || (int)$productId < 1 || !is_scalar($quantity)
+            || !preg_match('/^[1-9][0-9]{0,2}$/D', (string)$quantity)) {
+            throw new RuntimeException('Les quantités doivent être des nombres entiers de 1 à 999.');
+        }
+        $cart[(int)$productId] = ($cart[(int)$productId] ?? 0) + (int)$quantity;
+        if ($cart[(int)$productId] > 999) {
+            throw new RuntimeException('La quantité cumulée d’un produit ne peut pas dépasser 999.');
+        }
+    }
+    return $cart;
+};
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_cart'])) {
+    verify_csrf();
+    try {
+        if ($isLoggedIn && !$isClientLoggedIn) {
+            throw new RuntimeException('Vous êtes connecté avec un compte employé. Déconnectez-vous puis connectez-vous avec un compte client.');
+        }
+        $cart = $parseCart((string)($_POST['cart'] ?? '{}'));
+        if (!$cart) {
+            throw new RuntimeException('Votre panier est vide.');
+        }
+        $_SESSION['client_cart'] = $cart;
+        $storeId = (int)($_POST['magasin_id'] ?? 0);
+        $_SESSION['client_checkout_store'] = $storeId > 0 ? $storeId : 0;
+        header('Location: login.php?checkout=1', true, 303);
+        exit;
+    } catch (Throwable $exception) {
+        $errors[] = $exception->getMessage();
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
@@ -77,23 +124,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     }
 
     $magasinId = (int)($_POST['magasin_id'] ?? 0);
+    $_SESSION['client_checkout_store'] = $magasinId;
     $paymentMethod = trim((string)($_POST['mode_paiement'] ?? ''));
     $allowedPaymentMethods = ['Paiement à la caisse', 'Paiement au retrait'];
-    $postedCart = json_decode((string)($_POST['cart'] ?? '{}'), true);
-    $cart = [];
-    if (!is_array($postedCart) || count($postedCart) > 100) {
-        $errors[] = 'Panier invalide (100 produits maximum).';
-    } else {
-        foreach ($postedCart as $productId => $quantity) {
-            if (!ctype_digit((string)$productId) || (int)$productId < 1 || !is_scalar($quantity)
-                || !preg_match('/^[1-9][0-9]{0,2}$/D', (string)$quantity)) {
-                $errors[] = 'Les quantités doivent être des nombres entiers de 1 à 999.';
-                break;
-            }
-            $cart[(int)$productId] = (int)$quantity;
-        }
+    try {
+        $cartJson = (string)($_POST['cart'] ?? json_encode($_SESSION['client_cart']));
+        $cart = $parseCart($cartJson);
+    } catch (RuntimeException $exception) {
+        $cart = [];
+        $errors[] = $exception->getMessage();
     }
-    if (!$errors) {
+    if ($cart) {
         $_SESSION['client_cart'] = $cart;
     }
 
@@ -187,6 +228,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
 
             $pdo->commit();
             $_SESSION['client_cart'] = [];
+            unset($_SESSION['client_checkout_store']);
             $_SESSION['checkout_token'] = bin2hex(random_bytes(32));
             $_SESSION['client_order_success'] = ['number' => $number, 'total' => $total, 'store' => $store['nom']];
             try {
@@ -266,7 +308,7 @@ function clientPhoto(array $product): string
     <?php if (!$products): ?><p class="rounded-2xl bg-white p-8 text-center">Aucun produit disponible dans cette catégorie.</p><?php endif; ?>
 </main>
 <div id="cart-overlay" onclick="toggleCart()" class="fixed inset-0 z-40 hidden bg-black/40"></div>
-<aside id="cart-panel" class="cart-panel fixed z-50 h-auto max-h-[calc(100vh-2rem)] bg-white p-6 shadow-2xl"><div class="flex items-center justify-between"><h2 class="text-2xl font-black"><i class="fa-solid fa-bag-shopping mr-2 text-green-700"></i>Votre panier</h2><button type="button" onclick="toggleCart()" class="text-2xl" aria-label="Fermer"><i class="fa-solid fa-xmark"></i></button></div><p class="mt-2 text-sm text-gray-500">Vérifiez les quantités puis choisissez votre magasin de retrait.</p><div id="cart-lines" class="my-6 space-y-3"></div><p class="flex justify-between border-t py-4 text-xl font-black"><span>Total</span><span id="cart-total">0</span></p><form method="post" class="space-y-3"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><input type="hidden" name="place_order" value="1"><input type="hidden" name="checkout_token" value="<?= e($_SESSION['checkout_token']) ?>"><?php if (!$isClientLoggedIn): ?><p class="rounded-xl bg-green-50 p-3">Votre panier est conservé sur cet appareil. <a class="font-bold" href="login.php">Se connecter</a> ou <a class="font-bold" href="inscription_client.php">Créer mon compte</a> pour commander.</p><?php else: ?><p class="rounded-xl bg-green-50 p-3 text-sm text-green-900">Commande pour <?= e($clientUser['nom']) ?></p><?php endif; ?><label class="block text-sm font-bold">Magasin de retrait<select required name="magasin_id" class="mt-1 w-full rounded-xl border p-3"><option value="">Choisir un magasin</option><?php foreach ($stores as $store): ?><option value="<?= (int)$store['id'] ?>" <?= $magasinId === (int)$store['id'] ? 'selected' : '' ?>><?= e($store['nom']) ?><?= $store['ville'] ? ' - '.e($store['ville']) : '' ?></option><?php endforeach; ?></select></label><fieldset class="rounded-xl border p-3"><legend>Moyen de paiement</legend><?php foreach (['Paiement à la caisse', 'Paiement au retrait'] as $method): ?><label class="block py-2"><input required type="radio" name="mode_paiement" value="<?= e($method) ?>" <?= $paymentMethod === $method ? 'checked' : '' ?>> <?= e($method) ?></label><?php endforeach; ?></fieldset><input type="hidden" id="cart-input" name="cart" value=""><button id="submit-order" type="submit" <?= !$isClientLoggedIn ? 'disabled' : '' ?> class="w-full rounded-2xl bg-lime-500 p-4 font-black text-green-950"><i class="fa-solid fa-check mr-2"></i><?= $isClientLoggedIn ? 'Valider ma commande' : 'Connexion requise pour commander' ?></button></form></aside>
+<aside id="cart-panel" class="cart-panel fixed z-50 h-auto max-h-[calc(100vh-2rem)] bg-white p-6 shadow-2xl"><div class="flex items-center justify-between"><h2 class="text-2xl font-black"><i class="fa-solid fa-bag-shopping mr-2 text-green-700"></i>Votre panier</h2><button type="button" onclick="toggleCart()" class="text-2xl" aria-label="Fermer"><i class="fa-solid fa-xmark"></i></button></div><p class="mt-2 text-sm text-gray-500">Vérifiez les quantités puis choisissez votre magasin de retrait.</p><div id="cart-lines" class="my-6 space-y-3"></div><p class="flex justify-between border-t py-4 text-xl font-black"><span>Total</span><span id="cart-total">0</span></p><form method="post" class="space-y-3"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><input type="hidden" name="checkout_token" value="<?= e($_SESSION['checkout_token']) ?>"><?php if ($isLoggedIn && !$isClientLoggedIn): ?><p class="rounded-xl bg-red-50 p-3 text-sm text-red-800">Vous êtes connecté avec un compte employé. Déconnectez-vous puis connectez-vous avec un compte client pour commander.</p><?php elseif (!$isClientLoggedIn): ?><p class="rounded-xl bg-green-50 p-3">Votre panier sera conservé côté serveur pendant la connexion. Utilisez le bouton ci-dessous pour poursuivre.</p><?php elseif (!$clientAccountActive): ?><p class="rounded-xl bg-red-50 p-3 text-sm text-red-800">Ce compte client est inactif ou suspendu. Contactez un administrateur.</p><?php else: ?><p class="rounded-xl bg-green-50 p-3 text-sm text-green-900">Commande pour <?= e($clientUser['nom'] ?? '') ?></p><?php endif; ?><label class="block text-sm font-bold">Magasin de retrait<select required name="magasin_id" class="mt-1 w-full rounded-xl border p-3"><option value="">Choisir un magasin</option><?php foreach ($stores as $store): ?><option value="<?= (int)$store['id'] ?>" <?= $magasinId === (int)$store['id'] ? 'selected' : '' ?>><?= e($store['nom']) ?><?= $store['ville'] ? ' - '.e($store['ville']) : '' ?></option><?php endforeach; ?></select></label><fieldset class="rounded-xl border p-3"><legend>Moyen de paiement</legend><?php foreach (['Paiement à la caisse', 'Paiement au retrait'] as $method): ?><label class="block py-2"><input required type="radio" name="mode_paiement" value="<?= e($method) ?>" <?= $paymentMethod === $method ? 'checked' : '' ?>> <?= e($method) ?></label><?php endforeach; ?></fieldset><input type="hidden" id="cart-input" name="cart" value=""><button id="submit-order" name="<?= $isClientLoggedIn && $clientAccountActive ? 'place_order' : 'save_cart' ?>" value="1" type="submit" <?= ($isLoggedIn && !$isClientLoggedIn) || ($isClientLoggedIn && !$clientAccountActive) ? 'disabled' : '' ?> class="w-full rounded-2xl bg-lime-500 p-4 font-black text-green-950"><i class="fa-solid fa-check mr-2"></i><?= $isLoggedIn && !$isClientLoggedIn ? 'Compte employé : déconnexion requise' : ($isClientLoggedIn ? ($clientAccountActive ? 'Valider ma commande' : 'Compte client inactif') : 'Se connecter pour commander') ?></button></form></aside>
 <script>
 const products = <?= json_encode(array_column($cartProducts, null, 'id'), JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP) ?>;
 const serverCart = <?= json_encode($_SESSION['client_cart']) ?>;
@@ -276,7 +318,7 @@ try {
     if (saved && typeof saved === 'object' && !Array.isArray(saved)) cart = saved;
 } catch (error) {}
 <?php if ($success): ?>cart = {};<?php endif; ?>
-if (Object.keys(serverCart).length) cart = serverCart;
+if (!Object.keys(cart).length && Object.keys(serverCart).length) cart = serverCart;
 Object.entries(cart).forEach(([id, qty]) => {
     const product = products[id];
     const quantity = Math.min(999, Math.floor(Number(qty)), Math.floor(Number(product?.quantite || 0)));
@@ -307,6 +349,13 @@ if (location.hash === '#panier') toggleCart(true);
 <script>
 const orderForm = document.querySelector('#cart-panel form[method="post"]');
 const orderButton = document.getElementById('submit-order');
+const orderAction = document.createElement('input');
+orderAction.type = 'hidden';
+orderAction.name = orderButton.name;
+orderAction.value = orderButton.value;
+orderButton.removeAttribute('name');
+orderButton.removeAttribute('value');
+orderForm.appendChild(orderAction);
 orderForm.addEventListener('submit', (event) => {
     saveCart();
     if (!Object.keys(cart).length) {

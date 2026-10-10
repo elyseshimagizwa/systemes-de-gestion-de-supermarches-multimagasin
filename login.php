@@ -2,6 +2,8 @@
 
 require_once 'config.php';
 
+$checkoutLogin = (string)($_GET['checkout'] ?? $_POST['checkout'] ?? '') === '1';
+
 /* =========================================================
    REDIRECTION SI CONNECTÉ
 ========================================================= */
@@ -10,7 +12,7 @@ if (isLoggedIn()) {
 
     header(
         (currentUser()['role'] ?? '') === 'client'
-        ? 'Location: index.php'
+        ? ($checkoutLogin ? 'Location: index.php#panier' : 'Location: index.php')
         : 'Location: dashboard.php'
     );
     exit;
@@ -502,7 +504,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         header(
                             $user['role'] === 'client'
-                            ? "Location: index.php"
+                            ? ($checkoutLogin ? "Location: index.php#panier" : "Location: index.php")
                             : "Location: dashboard.php"
                         );
                         exit;
@@ -884,7 +886,8 @@ body{
         <a href="index.php" class="text-blue-500 hover:text-blue-700"  style="display: block; text-align: center; margin-top: 10px; border: 1px solid #5039c5; padding: 10px; border-radius: 15px; background-color: rgba(59, 130, 246, 0.7); color: white; text-decoration: none; transition: background-color 0.3s ease, color 0.3s ease;">
             Retour à l'accueil
         </a>
-        <p class="mt-4 text-center"><a href="inscription_client.php">Nouveau client ? Créer un compte</a></p>
+        <input type="hidden" name="checkout" value="<?= $checkoutLogin ? '1' : '0' ?>">
+        <p class="mt-4 text-center"><a href="inscription_client.php<?= $checkoutLogin ? '?checkout=1' : '' ?>">Nouveau client ? Créer un compte</a></p>
         <p id="returnMessage" style="text-align: center; margin-top: 10px; display: none; color: #5039c5; font-weight: bold;">
             Retour à l'accueil
         </p>

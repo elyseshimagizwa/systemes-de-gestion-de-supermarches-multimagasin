@@ -551,7 +551,7 @@ $tva = isset($v['tva'])
 
         <div class="flex gap-2 flex-wrap">
 
-            <a href="ticket_pdf.php?id=<?= $v['id'] ?>"
+            <a href="ticket_pdf.php?ticket=<?= $v['id'] ?>"
                target="_blank"
                class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm">
 
@@ -566,7 +566,7 @@ $tva = isset($v['tva'])
                 👁 Détails
             </button>
 
-            <a href="ticket_pdf.php?id=<?= $v['id'] ?>"
+            <a href="ticket_pdf.php?ticket=<?= $v['id'] ?>"
                target="_blank"
                class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm">
 

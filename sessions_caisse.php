@@ -287,50 +287,52 @@ if(
         $montant_initial +
         $reste_veille;
 
-    $insert = $pdo->prepare("
-        INSERT INTO sessions_caisse
-        (
-            utilisateur_id,
-            magasin_id,
-            montant_reel,
-            difference_caisse,
+        $insert = $pdo->prepare("
+    INSERT INTO sessions_caisse
+    (
+        utilisateur_id,
+        magasin_id,
+        caisse_id,
+        montant_initial,
+        reste_veille,
+        solde_depart,
+        total_ventes,
+        montant_attendu,
+        montant_reel,
+        difference_caisse,
+        commentaire_ecart,
+        date_ouverture,
+        statut,
+        statut_validation
+    )
+    VALUES
+    (
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        0,
+        ?,
+        0,
+        0,
+        NULL,
+        NOW(),
+        'ouverte',
+        'attente'
+    )
+");
 
-            date_ouverture,
-
-            statut,
-            statut_validation
-        )
-        VALUES
-        (
-            ?,
-            ?,
-            ?,
-
-            ?,
-            ?,
-            ?,
-
-            0,
-            0,
-            0,
-            0,
-
-            NOW(),
-
-            'ouverte',
-            'attente'
-        )
-    ");
-
-    $insert->execute([
-        $user['id'],
-        $magasin_id,
-        $caisse_id,
-
-        $montant_initial,
-        $reste_veille,
-        $solde_depart
-    ]);
+$insert->execute([
+    $user['id'],
+    $magasin_id,
+    $caisse_id,
+    $montant_initial,
+    $reste_veille,
+    $solde_depart,
+    $solde_depart
+]);
 
     flash(
         'success',

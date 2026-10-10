@@ -42,6 +42,50 @@ if (!function_exists('e')) {
     }
 }
 
+if (!function_exists('generateTicketNumber')) {
+
+    function generateTicketNumber(): string
+    {
+        return 'TK-' . date('YmdHis') . '-' . strtoupper(bin2hex(random_bytes(4)));
+    }
+}
+
+if (!function_exists('normalizeSaleQuantities')) {
+
+    function normalizeSaleQuantities(array $items): array
+    {
+        if (!$items || count($items) > 200) {
+            throw new InvalidArgumentException('Panier vide ou trop volumineux.');
+        }
+
+        $quantities = [];
+        foreach ($items as $item) {
+            $productIdInput = is_array($item) ? ($item['id'] ?? null) : null;
+            if (
+                !is_array($item)
+                || (!is_int($productIdInput) && !is_string($productIdInput))
+                || !ctype_digit((string)$productIdInput)
+                || !is_numeric($item['qty'] ?? null)
+            ) {
+                throw new InvalidArgumentException('Produit ou quantité invalide.');
+            }
+
+            $productId = (int)$productIdInput;
+            $quantity = round((float)$item['qty'], 3);
+            if ($productId <= 0 || !is_finite($quantity) || $quantity <= 0 || $quantity > 10000) {
+                throw new InvalidArgumentException('Produit ou quantité invalide.');
+            }
+
+            $quantities[$productId] = round(($quantities[$productId] ?? 0) + $quantity, 3);
+            if ($quantities[$productId] > 10000) {
+                throw new InvalidArgumentException('Quantité trop élevée.');
+            }
+        }
+
+        return $quantities;
+    }
+}
+
 /* =========================================================
 | AUTH SYSTEM
 ========================================================= */
@@ -800,4 +844,3 @@ if (!function_exists('randomToken')) {
 /* =========================================================
 | DONE
 ========================================================= */
-

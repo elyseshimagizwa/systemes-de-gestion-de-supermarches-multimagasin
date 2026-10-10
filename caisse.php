@@ -248,37 +248,17 @@ if (
             );
         }
 
+        $requestedQuantities = normalizeSaleQuantities($items);
+
         $pdo->beginTransaction();
 
         $totalHT = 0;
 
         $validatedItems = [];
 
-        foreach ($items as $it) {
+        foreach ($requestedQuantities as $produit_id => $requestedQty) {
 
-            $produit_id =
-                secureInt($it['id'] ?? 0);
-
-            $qty =
-                round((float)($it['qty'] ?? 0), 3);
-
-            if (
-                $produit_id <= 0
-                ||
-                $qty <= 0
-            ) {
-
-                throw new Exception(
-                    "Produit invalide"
-                );
-            }
-
-            if ($qty > 10000) {
-
-                throw new Exception(
-                    "Quantité trop élevée"
-                );
-            }
+            $qty = round($requestedQty, 3);
 
             $q = $pdo->prepare("
                 SELECT
@@ -347,9 +327,6 @@ if (
 
                 'ancien_stock' => $stock,
 
-                'nouveau_stock' =>
-                    $stock - $qty,
-
                 'sous_total' => $sousTotal
             ];
         }
@@ -384,9 +361,11 @@ if (
                 )
             );
 
+        $numeroTicket = generateTicketNumber();
         $stmt = $pdo->prepare("
             INSERT INTO ventes
             (
+                numero_ticket,
                 utilisateur_id,
                 magasin_id,
                 caisse_id,
@@ -408,17 +387,15 @@ if (
                 ?,
                 ?,
                 ?,
+                ?,
                 NOW(),
                 ?
             )
         ");
-        mail(
-    "mcshimel4@gmail.com",
-    "Nouvelle vente",
-    "Une nouvelle vente vient d'être enregistrée"
-);
 
         $stmt->execute([
+
+            $numeroTicket,
 
             secureInt($user['id']),
 
@@ -447,19 +424,25 @@ if (
             $updateStock =
                 $pdo->prepare("
                     UPDATE produits
-                    SET quantite=?
+                    SET quantite=quantite-?
                     WHERE id=?
                     AND magasin_id=?
+                    AND quantite>=?
                 ");
 
             $updateStock->execute([
 
-                $item['nouveau_stock'],
+                $item['qty'],
 
                 $item['id'],
 
-                $magasin_id
+                $magasin_id,
+
+                $item['qty']
             ]);
+            if ($updateStock->rowCount() !== 1) {
+                throw new Exception("Le stock du magasin actif n'a pas pu être mis à jour");
+            }
 
             $ligne =
                 $pdo->prepare("
@@ -540,7 +523,7 @@ if (
 
                 $item['ancien_stock'],
 
-                $item['nouveau_stock'],
+                $item['ancien_stock'] - $item['qty'],
 
                 'Vente caisse',
 
@@ -548,7 +531,7 @@ if (
             ]);
 
             if (
-                $item['nouveau_stock']
+                $item['ancien_stock'] - $item['qty']
                 <= 5
             ) {
 
@@ -644,7 +627,7 @@ if (
         session_regenerate_id(true);
 
         header(
-            "Location: ticket_pdf.php?id="
+            "Location: ticket_pdf.php?ticket="
             .$venteId
         );
 

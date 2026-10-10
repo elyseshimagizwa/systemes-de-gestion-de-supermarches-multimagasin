@@ -113,19 +113,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     verify_csrf();
 
     try {
+        if ($currentSessionId === null) {
+            throw new RuntimeException('Ouvrez une session de caisse avant de vendre.');
+        }
 
         $items = json_decode(
             $_POST['panier'] ?? '[]',
-            true
+            true,
+            512,
+            JSON_THROW_ON_ERROR
         );
 
-        if(empty($items)) {
-            throw new Exception("Panier vide");
+        if (!is_array($items) || empty($items) || count($items) > 200) {
+            throw new RuntimeException("Panier vide ou trop volumineux.");
         }
 
-        $mode = trim($_POST['mode_paiement']);
+        $mode = trim((string)($_POST['mode_paiement'] ?? ''));
+        if (!in_array($mode, ['Espèces', 'Carte', 'Mobile Money'], true)) {
+            throw new RuntimeException('Mode de paiement invalide.');
+        }
 
-        $montantRecu = (float)$_POST['montant_recu'];
+        $montantRecu = (float)($_POST['montant_recu'] ?? 0);
+        if (!is_finite($montantRecu) || $montantRecu < 0) {
+            throw new RuntimeException('Montant reçu invalide.');
+        }
+
+        $requestedQuantities = normalizeSaleQuantities($items);
 
         $pdo->beginTransaction();
 
@@ -133,7 +146,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
 
         $validatedItems = [];
 
-        foreach($items as $it){
+        foreach ($requestedQuantities as $productId => $requestedQuantity) {
 
             $q = $pdo->prepare("
            SELECT *
@@ -150,7 +163,7 @@ FOR UPDATE");
 
            $q->execute([
 
-$it['id'],
+$productId,
 
 $currentMagasinId
 
@@ -162,22 +175,23 @@ $currentMagasinId
                 throw new Exception("Produit introuvable");
             }
 
-            if($p['quantite'] < $it['qty']){
+            $quantity = round($requestedQuantity, 3);
+            if($p['quantite'] < $quantity){
                 throw new Exception("Stock insuffisant");
             }
 
             $sousTotal =
-                $it['qty'] * $p['prix_vente'];
+                $quantity * $p['prix_vente'];
 
             $totalHT += $sousTotal;
 
             $validatedItems[] = [
 
-                'id' => $p['id'],
+                'id' => (int)$p['id'],
                 'nom' => $p['nom'],
-                'qty' => $it['qty'],
+                'qty' => $quantity,
                 'prix' => $p['prix_vente'],
-                'ancien_stock' => (int)$p['quantite'],
+                'ancien_stock' => (float)$p['quantite'],
                 'sous_total' => $sousTotal
             ];
         }
@@ -188,11 +202,14 @@ $currentMagasinId
         $totalTTC =
             $totalHT + $tva;
 
+        if ($mode === 'Espèces' && $montantRecu < $totalTTC) {
+            throw new RuntimeException('Montant reçu insuffisant.');
+        }
+
         $monnaie =
             max(0, $montantRecu - $totalTTC);
 
-        $numeroTicket =
-            'TK-'.date('YmdHis');
+        $numeroTicket = generateTicketNumber();
 
         $stmt = $pdo->prepare("
             INSERT INTO ventes
@@ -211,7 +228,7 @@ $currentMagasinId
             )
             VALUES
             (
-                ?,?,?,?,?,?,?,?,?,NOW()
+                ?,?,?,?,?,?,?,?,?,?,NOW()
             )
         ");
 
@@ -282,7 +299,9 @@ WHERE
 
 id=?
 
-AND magasin_id=?");
+AND magasin_id=?
+
+AND quantite>=?");
 
             $update->execute([
 
@@ -290,7 +309,9 @@ $item['qty'],
 
 $item['id'],
 
-$currentMagasinId
+$currentMagasinId,
+
+$item['qty']
 
 ]);
 
@@ -326,7 +347,7 @@ $currentMagasinId
 
         $pdo->commit();
 
-        header("Location:caisse.php?ticket=".$venteId);
+        header("Location:ticket_pdf.php?ticket=".$venteId, true, 303);
 
         exit;
 
@@ -336,7 +357,9 @@ $currentMagasinId
             $pdo->rollBack();
         }
 
-        die($e->getMessage());
+        flash('error', $e->getMessage());
+        header('Location: caisse.php', true, 303);
+        exit;
     }
 }
 
@@ -644,11 +667,11 @@ function submitCart(){
 
 </script>
 
-<?php if(isset($_GET['ticket'])): ?>
+<?php if(isset($_GET['ticket']) || isset($_GET['id'])): ?>
 
 <?php
 
-$venteId = (int)$_GET['ticket'];
+$venteId = (int)($_GET['ticket'] ?? $_GET['id']);
 
 $stmt = $pdo->prepare("
   SELECT
@@ -684,6 +707,10 @@ $currentMagasinId
 ]);
 
 $vente = $stmt->fetch();
+if (!$vente) {
+    http_response_code(404);
+    exit('Ticket introuvable dans ce magasin.');
+}
 
 $stmtLignes = $pdo->prepare("
    SELECT
@@ -802,7 +829,7 @@ Monnaie :
 
     Vérification :
 
-    <?= BASE_URL ?>/verify-ticket.php?ticket=<?= urlencode($vente['numero_ticket']) 
+    <?= BASE_URL ?>/verify_ticket.php?ticket=<?= urlencode($vente['numero_ticket'])
     ?>
 
 </div>
@@ -815,7 +842,7 @@ new QRCode(
     document.getElementById("qrcode"),
     {
         text:
-            "<?= BASE_URL ?>/verify-ticket.php?ticket=<?= urlencode($vente['numero_ticket']) ?>",
+            "<?= BASE_URL ?>/verify_ticket.php?ticket=<?= urlencode($vente['numero_ticket']) ?>",
 
         width:120,
         height:120
